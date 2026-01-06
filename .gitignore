@@ -49,3 +49,7 @@ tmp/
 # Config files with secrets
 configs/*.prod.yaml
 configs/*.secret.yaml
+
+# Python
+__pycache__/
+*.pyc
