@@ -38,6 +38,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 전체 히스토리 필요 (base commit 비교용)
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -49,7 +51,7 @@ jobs:
 
     - name: Run golangci-lint
       run: |
-        golangci-lint run --timeout=5m --new-from-rev=origin/main --out-format=colored-line-number > golangci-result.txt 2>&1 || echo "lint_issues=true" >> $GITHUB_ENV
+        golangci-lint run --timeout=5m --new-from-rev=${{ github.event.pull_request.base.sha }} --out-format=colored-line-number > golangci-result.txt 2>&1 || echo "lint_issues=true" >> $GITHUB_ENV
 
     - name: Show lint results
       if: always()
