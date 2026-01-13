@@ -105,7 +105,7 @@ func (h *SiteHandler) GetSettings(c *fiber.Ctx) error {
 
 	settings, err := h.service.GetSettings(c.Context(), siteID)
 	if err != nil {
-		if err == service.ErrSiteNotFound {
+		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
 		}
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve settings", err)
@@ -136,7 +136,7 @@ func (h *SiteHandler) UpdateSettings(c *fiber.Ctx) error {
 
 	err := h.service.UpdateSettings(c.Context(), siteID, &req)
 	if err != nil {
-		if err == service.ErrSiteNotFound {
+		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
 		}
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update settings", err)
@@ -194,11 +194,11 @@ func (h *SiteHandler) CheckSubdomainAvailability(c *fiber.Ctx) error {
 
 	// DB에서 중복 체크
 	site, err := h.service.GetBySubdomain(c.Context(), subdomain)
-	if err != nil && err != service.ErrSiteNotFound {
+	if err != nil && !errors.Is(err, service.ErrSiteNotFound) {
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to check subdomain", err)
 	}
 
-	available := (site == nil || err == service.ErrSiteNotFound)
+	available := (site == nil || errors.Is(err, service.ErrSiteNotFound))
 	reason := ""
 	if !available {
 		reason = "Subdomain already taken"
