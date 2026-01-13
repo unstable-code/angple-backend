@@ -21,15 +21,8 @@ func NewSiteHandler(service *service.SiteService) *SiteHandler {
 // Public Endpoints (인증 불필요)
 // ========================================
 
-// GetBySubdomain retrieves a site by subdomain
-// GET /api/v2/sites/subdomain/:subdomain
-func (h *SiteHandler) GetBySubdomain(c *fiber.Ctx) error {
-	subdomain := c.Params("subdomain")
-	if subdomain == "" {
-		return common.ErrorResponse(c, fiber.StatusBadRequest, "Subdomain is required", nil)
-	}
-
-	site, err := h.service.GetBySubdomain(c.Context(), subdomain)
+// handleSiteRetrieval is a helper function to handle common site retrieval logic
+func (h *SiteHandler) handleSiteRetrieval(c *fiber.Ctx, site *domain.SiteResponse, err error) error {
 	if err != nil {
 		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
@@ -42,6 +35,18 @@ func (h *SiteHandler) GetBySubdomain(c *fiber.Ctx) error {
 	}, nil)
 }
 
+// GetBySubdomain retrieves a site by subdomain
+// GET /api/v2/sites/subdomain/:subdomain
+func (h *SiteHandler) GetBySubdomain(c *fiber.Ctx) error {
+	subdomain := c.Params("subdomain")
+	if subdomain == "" {
+		return common.ErrorResponse(c, fiber.StatusBadRequest, "Subdomain is required", nil)
+	}
+
+	site, err := h.service.GetBySubdomain(c.Context(), subdomain)
+	return h.handleSiteRetrieval(c, site, err)
+}
+
 // GetByID retrieves a site by ID
 // GET /api/v2/sites/:id
 func (h *SiteHandler) GetByID(c *fiber.Ctx) error {
@@ -51,16 +56,7 @@ func (h *SiteHandler) GetByID(c *fiber.Ctx) error {
 	}
 
 	site, err := h.service.GetByID(c.Context(), siteID)
-	if err != nil {
-		if errors.Is(err, service.ErrSiteNotFound) {
-			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
-		}
-		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve site", err)
-	}
-
-	return common.SuccessResponse(c, map[string]interface{}{
-		"site": site,
-	}, nil)
+	return h.handleSiteRetrieval(c, site, err)
 }
 
 // Create creates a new site (for provisioning API)
