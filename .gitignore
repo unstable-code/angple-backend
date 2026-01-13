@@ -63,3 +63,8 @@ data/recommended/*.json
 !data/recommended/12hours.json
 !data/recommended/24hours.json
 !data/recommended/48hours.json
+# Serena MCP
+.serena/
+
+# Backup files
+*.backup
