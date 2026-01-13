@@ -4,9 +4,10 @@ import "errors"
 
 // Business logic errors
 var (
-	// General errors
-	ErrNotFound  = errors.New("resource not found")
-	ErrForbidden = errors.New("forbidden")
+	// Generic errors
+	ErrNotFound   = errors.New("resource not found")
+	ErrForbidden  = errors.New("forbidden")
+	ErrBadRequest = errors.New("bad request")
 
 	// Post errors
 	ErrPostNotFound  = errors.New("post not found")

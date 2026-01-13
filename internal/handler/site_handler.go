@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/damoang/angple-backend/internal/common"
 	"github.com/damoang/angple-backend/internal/domain"
 	"github.com/damoang/angple-backend/internal/service"
@@ -19,6 +21,20 @@ func NewSiteHandler(service *service.SiteService) *SiteHandler {
 // Public Endpoints (인증 불필요)
 // ========================================
 
+// handleSiteRetrieval is a helper function to handle common site retrieval logic
+func (h *SiteHandler) handleSiteRetrieval(c *fiber.Ctx, site *domain.SiteResponse, err error) error {
+	if err != nil {
+		if errors.Is(err, service.ErrSiteNotFound) {
+			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
+		}
+		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve site", err)
+	}
+
+	return common.SuccessResponse(c, map[string]interface{}{
+		"site": site,
+	}, nil)
+}
+
 // GetBySubdomain retrieves a site by subdomain
 // GET /api/v2/sites/subdomain/:subdomain
 func (h *SiteHandler) GetBySubdomain(c *fiber.Ctx) error {
@@ -28,16 +44,7 @@ func (h *SiteHandler) GetBySubdomain(c *fiber.Ctx) error {
 	}
 
 	site, err := h.service.GetBySubdomain(c.Context(), subdomain)
-	if err != nil {
-		if err == service.ErrSiteNotFound {
-			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
-		}
-		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve site", err)
-	}
-
-	return common.SuccessResponse(c, map[string]interface{}{
-		"site": site,
-	}, nil)
+	return h.handleSiteRetrieval(c, site, err)
 }
 
 // GetByID retrieves a site by ID
@@ -49,16 +56,7 @@ func (h *SiteHandler) GetByID(c *fiber.Ctx) error {
 	}
 
 	site, err := h.service.GetByID(c.Context(), siteID)
-	if err != nil {
-		if err == service.ErrSiteNotFound {
-			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
-		}
-		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve site", err)
-	}
-
-	return common.SuccessResponse(c, map[string]interface{}{
-		"site": site,
-	}, nil)
+	return h.handleSiteRetrieval(c, site, err)
 }
 
 // Create creates a new site (for provisioning API)
@@ -74,16 +72,14 @@ func (h *SiteHandler) Create(c *fiber.Ctx) error {
 
 	site, err := h.service.Create(c.Context(), &req)
 	if err != nil {
-		switch err {
-		case service.ErrInvalidSubdomain:
+		if errors.Is(err, service.ErrInvalidSubdomain) {
 			return common.ErrorResponse(c, fiber.StatusBadRequest, "Invalid subdomain format", err)
-		case service.ErrSubdomainTaken:
+		} else if errors.Is(err, service.ErrSubdomainTaken) {
 			return common.ErrorResponse(c, fiber.StatusConflict, "Subdomain already taken", err)
-		case service.ErrInvalidPlan:
+		} else if errors.Is(err, service.ErrInvalidPlan) {
 			return common.ErrorResponse(c, fiber.StatusBadRequest, "Invalid plan", err)
-		default:
-			return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create site", err)
 		}
+		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create site", err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(common.APIResponse{
@@ -107,7 +103,7 @@ func (h *SiteHandler) GetSettings(c *fiber.Ctx) error {
 
 	settings, err := h.service.GetSettings(c.Context(), siteID)
 	if err != nil {
-		if err == service.ErrSiteNotFound {
+		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
 		}
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve settings", err)
@@ -138,7 +134,7 @@ func (h *SiteHandler) UpdateSettings(c *fiber.Ctx) error {
 
 	err := h.service.UpdateSettings(c.Context(), siteID, &req)
 	if err != nil {
-		if err == service.ErrSiteNotFound {
+		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
 		}
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update settings", err)
@@ -196,11 +192,11 @@ func (h *SiteHandler) CheckSubdomainAvailability(c *fiber.Ctx) error {
 
 	// DB에서 중복 체크
 	site, err := h.service.GetBySubdomain(c.Context(), subdomain)
-	if err != nil && err != service.ErrSiteNotFound {
+	if err != nil && !errors.Is(err, service.ErrSiteNotFound) {
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to check subdomain", err)
 	}
 
-	available := (site == nil || err == service.ErrSiteNotFound)
+	available := (site == nil || errors.Is(err, service.ErrSiteNotFound))
 	reason := ""
 	if !available {
 		reason = "Subdomain already taken"

@@ -212,7 +212,11 @@ func (s *SiteService) ListActive(ctx context.Context, limit, offset int) ([]doma
 
 	responses := make([]domain.SiteResponse, 0, len(sites))
 	for _, site := range sites {
-		settings, _ := s.repo.FindSettingsBySiteID(ctx, site.ID)
+		settings, err := s.repo.FindSettingsBySiteID(ctx, site.ID)
+		if err != nil {
+			// Settings not found is acceptable, continue with nil settings
+			settings = nil
+		}
 		resp := site.ToResponse(settings)
 		responses = append(responses, *resp)
 	}
@@ -273,8 +277,8 @@ func (s *SiteService) ValidateSubdomain(subdomain string) bool {
 	}
 
 	// Format check (alphanumeric and hyphens, no start/end hyphen)
-	matched, _ := regexp.MatchString(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`, subdomain)
-	if !matched {
+	matched, err := regexp.MatchString(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`, subdomain)
+	if err != nil || !matched {
 		return false
 	}
 
