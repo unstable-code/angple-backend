@@ -72,16 +72,14 @@ func (h *SiteHandler) Create(c *fiber.Ctx) error {
 
 	site, err := h.service.Create(c.Context(), &req)
 	if err != nil {
-		switch err {
-		case service.ErrInvalidSubdomain:
+		if errors.Is(err, service.ErrInvalidSubdomain) {
 			return common.ErrorResponse(c, fiber.StatusBadRequest, "Invalid subdomain format", err)
-		case service.ErrSubdomainTaken:
+		} else if errors.Is(err, service.ErrSubdomainTaken) {
 			return common.ErrorResponse(c, fiber.StatusConflict, "Subdomain already taken", err)
-		case service.ErrInvalidPlan:
+		} else if errors.Is(err, service.ErrInvalidPlan) {
 			return common.ErrorResponse(c, fiber.StatusBadRequest, "Invalid plan", err)
-		default:
-			return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create site", err)
 		}
+		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create site", err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(common.APIResponse{

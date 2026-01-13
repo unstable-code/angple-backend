@@ -245,7 +245,10 @@ func (s *BoardService) CanComment(boardID string, memberLevel int) (bool, error)
 
 func isValidBoardID(boardID string) bool {
 	// 영문+숫자만 허용, 2~20자
-	matched, _ := regexp.MatchString(`^[a-zA-Z0-9]{2,20}$`, boardID)
+	matched, err := regexp.MatchString(`^[a-zA-Z0-9]{2,20}$`, boardID)
+	if err != nil {
+		return false
+	}
 	return matched
 }
 
