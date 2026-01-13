@@ -96,7 +96,7 @@ type CreateBoardRequest struct {
 	GroupID      string `json:"group_id" binding:"required"`
 	Subject      string `json:"subject" binding:"required,min=1,max=255"`
 	Admin        string `json:"admin,omitempty"`
-	Device       string `json:"device,omitempty"` // pc, mobile, both
+	Device       string `json:"device,omitempty"`        // pc, mobile, both
 	CategoryList string `json:"category_list,omitempty"` // 파이프 구분 (예: "공지|자유|질문")
 	Skin         string `json:"skin,omitempty"`
 	MobileSkin   string `json:"mobile_skin,omitempty"`
