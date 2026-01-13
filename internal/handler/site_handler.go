@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/damoang/angple-backend/internal/common"
 	"github.com/damoang/angple-backend/internal/domain"
 	"github.com/damoang/angple-backend/internal/service"
@@ -29,7 +31,7 @@ func (h *SiteHandler) GetBySubdomain(c *fiber.Ctx) error {
 
 	site, err := h.service.GetBySubdomain(c.Context(), subdomain)
 	if err != nil {
-		if err == service.ErrSiteNotFound {
+		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
 		}
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve site", err)
@@ -50,7 +52,7 @@ func (h *SiteHandler) GetByID(c *fiber.Ctx) error {
 
 	site, err := h.service.GetByID(c.Context(), siteID)
 	if err != nil {
-		if err == service.ErrSiteNotFound {
+		if errors.Is(err, service.ErrSiteNotFound) {
 			return common.ErrorResponse(c, fiber.StatusNotFound, "Site not found", err)
 		}
 		return common.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to retrieve site", err)
