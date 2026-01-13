@@ -66,20 +66,13 @@ func (SiteSettings) TableName() string {
 
 // SiteUser represents user permissions for a site
 type SiteUser struct {
-	// int64 필드 (8 bytes)
-	ID int64 `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-
-	// time.Time 필드들 (8 bytes each)
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
-
-	// 포인터 필드 (8 bytes)
-	InvitedBy *string `gorm:"column:invited_by" json:"invited_by,omitempty"`
-
-	// String 필드들
-	SiteID string `gorm:"column:site_id;uniqueIndex:idx_site_user" json:"site_id"`
-	UserID string `gorm:"column:user_id;uniqueIndex:idx_site_user" json:"user_id"`
-	Role   string `gorm:"column:role;default:viewer" json:"role"` // owner, admin, editor, viewer
+	InvitedBy *string   `gorm:"column:invited_by" json:"invited_by,omitempty"`
+	SiteID    string    `gorm:"column:site_id;uniqueIndex:idx_site_user" json:"site_id"`
+	UserID    string    `gorm:"column:user_id;uniqueIndex:idx_site_user" json:"user_id"`
+	Role      string    `gorm:"column:role;default:viewer" json:"role"`
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 }
 
 func (SiteUser) TableName() string {
@@ -88,26 +81,17 @@ func (SiteUser) TableName() string {
 
 // SiteUsage represents daily resource usage tracking
 type SiteUsage struct {
-	// int64 필드 (8 bytes)
-	ID int64 `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-
-	// time.Time 필드들 (8 bytes each)
-	Date      time.Time `gorm:"column:date;type:date;uniqueIndex:idx_site_date" json:"date"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
-
-	// float64 필드들 (8 bytes each)
-	StorageUsedMB   float64 `gorm:"column:storage_used_mb;type:decimal(10,2);default:0" json:"storage_used_mb"`
-	BandwidthUsedMB float64 `gorm:"column:bandwidth_used_mb;type:decimal(10,2);default:0" json:"bandwidth_used_mb"`
-
-	// String 필드
-	SiteID string `gorm:"column:site_id;uniqueIndex:idx_site_date" json:"site_id"`
-
-	// int 필드들 (4 bytes each)
-	UniqueVisitors  int `gorm:"column:unique_visitors;default:0" json:"unique_visitors"`
-	PageViews       int `gorm:"column:page_views;default:0" json:"page_views"`
-	PostsCreated    int `gorm:"column:posts_created;default:0" json:"posts_created"`
-	CommentsCreated int `gorm:"column:comments_created;default:0" json:"comments_created"`
-	APICalls        int `gorm:"column:api_calls;default:0" json:"api_calls"`
+	Date            time.Time `gorm:"column:date;type:date;uniqueIndex:idx_site_date" json:"date"`
+	CreatedAt       time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+	SiteID          string    `gorm:"column:site_id;uniqueIndex:idx_site_date" json:"site_id"`
+	ID              int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	StorageUsedMB   float64   `gorm:"column:storage_used_mb;type:decimal(10,2);default:0" json:"storage_used_mb"`
+	BandwidthUsedMB float64   `gorm:"column:bandwidth_used_mb;type:decimal(10,2);default:0" json:"bandwidth_used_mb"`
+	UniqueVisitors  int       `gorm:"column:unique_visitors;default:0" json:"unique_visitors"`
+	PageViews       int       `gorm:"column:page_views;default:0" json:"page_views"`
+	PostsCreated    int       `gorm:"column:posts_created;default:0" json:"posts_created"`
+	CommentsCreated int       `gorm:"column:comments_created;default:0" json:"comments_created"`
+	APICalls        int       `gorm:"column:api_calls;default:0" json:"api_calls"`
 }
 
 func (SiteUsage) TableName() string {
