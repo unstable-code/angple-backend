@@ -45,7 +45,6 @@ func (h *PostHandler) ListPosts(c *gin.Context) {
 	}
 
 	common.SuccessResponse(c, data, meta)
-	return
 }
 
 // GetPost godoc
@@ -82,7 +81,6 @@ func (h *PostHandler) GetPost(c *gin.Context) {
 	}
 
 	common.SuccessResponse(c, data, nil)
-	return
 }
 
 // CreatePost godoc
@@ -249,5 +247,4 @@ func (h *PostHandler) SearchPosts(c *gin.Context) {
 	}
 
 	common.SuccessResponse(c, data, meta)
-	return
 }

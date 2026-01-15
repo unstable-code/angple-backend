@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/damoang/angple-backend/docs" // swagger docs
 	"github.com/damoang/angple-backend/internal/config"
 	"github.com/damoang/angple-backend/internal/handler"
 	"github.com/damoang/angple-backend/internal/repository"
@@ -18,13 +19,11 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	swaggerFiles "github.com/swaggo/files"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
-
-	_ "github.com/damoang/angple-backend/docs" // swagger docs
 )
 
 // @title           Angple Backend API
