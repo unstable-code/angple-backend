@@ -22,6 +22,7 @@ import (
 	pluginstoreSvc "github.com/damoang/angple-backend/internal/pluginstore/service"
 	"github.com/damoang/angple-backend/internal/repository"
 	gnuboard "github.com/damoang/angple-backend/internal/domain/gnuboard"
+	v2domain "github.com/damoang/angple-backend/internal/domain/v2"
 	gnurepo "github.com/damoang/angple-backend/internal/repository/gnuboard"
 	v2repo "github.com/damoang/angple-backend/internal/repository/v2"
 	v2routes "github.com/damoang/angple-backend/internal/routes/v2"
@@ -273,6 +274,7 @@ func main() {
 		v2Handler := v2handler.NewV2Handler(v2UserRepo, v2PostRepo, v2CommentRepo, v2BoardRepo, permChecker)
 		v2Handler.SetPointRepository(v2PointRepo)
 		v2Handler.SetRevisionRepository(v2RevisionRepo)
+		v2Handler.SetGnuDB(db)
 
 		// TODO: 경험치 서비스 구현 후 활성화
 		// expSvc := v2svc.NewExpService(v2UserRepo)
@@ -904,6 +906,31 @@ func main() {
 			// Transform to v1 format
 			items := v1handler.TransformToV1Posts(posts, noticeIDMap)
 
+			// Enrich thumbnails from g5_board_file for posts that have files but no thumbnail
+			var needFileIDs []int
+			for _, item := range items {
+				if _, ok := item["thumbnail"]; !ok {
+					if hasFile, _ := item["has_file"].(bool); hasFile {
+						if id, ok := item["id"].(int); ok {
+							needFileIDs = append(needFileIDs, id)
+						}
+					}
+				}
+			}
+			if len(needFileIDs) > 0 {
+				if fileImages, err := gnuFileRepo.GetFirstImagesByPostIDs(slug, needFileIDs); err == nil && len(fileImages) > 0 {
+					for i, item := range items {
+						if _, ok := item["thumbnail"]; !ok {
+							if id, ok := item["id"].(int); ok {
+								if fname, ok := fileImages[id]; ok {
+									items[i]["thumbnail"] = "data/file/" + slug + "/" + fname
+								}
+							}
+						}
+					}
+				}
+			}
+
 			response := gin.H{
 				"success": true,
 				"data":    items,
@@ -992,9 +1019,38 @@ func main() {
 				return
 			}
 
+			// 댓글별 수정 횟수 배치 조회
+			commentIDs := make([]int, len(comments))
+			for i, c := range comments {
+				commentIDs[i] = c.WrID
+			}
+			editCountMap := map[int]int{}
+			if len(commentIDs) > 0 {
+				type EditCount struct {
+					WrID  int `gorm:"column:wr_id"`
+					Count int `gorm:"column:cnt"`
+				}
+				var counts []EditCount
+				db.Table("g5_write_revisions").
+					Select("wr_id, COUNT(*) as cnt").
+					Where("board_id = ? AND wr_id IN ?", slug, commentIDs).
+					Group("wr_id").
+					Find(&counts)
+				for _, ec := range counts {
+					editCountMap[ec.WrID] = ec.Count
+				}
+			}
+
+			transformed := v1handler.TransformToV1Comments(comments)
+			for i, comment := range comments {
+				if cnt, ok := editCountMap[comment.WrID]; ok && cnt > 0 {
+					transformed[i]["edit_count"] = cnt
+				}
+			}
+
 			c.JSON(http.StatusOK, gin.H{
 				"success": true,
-				"data":    v1handler.TransformToV1Comments(comments),
+				"data":    transformed,
 			})
 		})
 
@@ -1098,17 +1154,263 @@ func main() {
 			})
 		})
 
-		// GET /api/v1/boards/:slug/posts/:id/revisions - Get post revision history (stub)
+		// GET /api/v1/boards/:slug/posts/:id/revisions - Get post revision history
 		v1Boards.GET("/:slug/posts/:id/revisions", func(c *gin.Context) {
+			slug := c.Param("slug")
+			postID, err := strconv.Atoi(c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid post ID"})
+				return
+			}
+
+			userLevel := middleware.GetUserLevel(c)
+
+			// 관리자: full revision 데이터 반환
+			if userLevel >= 10 {
+				type Revision struct {
+					ID           int64     `json:"id"`
+					BoardID      string    `json:"board_id"`
+					WrID         int       `json:"wr_id"`
+					Version      int       `json:"version"`
+					ChangeType   string    `json:"change_type"`
+					Title        *string   `json:"title"`
+					Content      *string   `json:"content"`
+					EditedBy     string    `json:"edited_by"`
+					EditedByName *string   `json:"edited_by_name"`
+					EditedAt     time.Time `json:"edited_at"`
+				}
+
+				var revisions []Revision
+				if err := db.Table("g5_write_revisions").
+					Where("board_id = ? AND wr_id = ?", slug, postID).
+					Order("version DESC").
+					Find(&revisions).Error; err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "리비전 조회 실패"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"success": true,
+					"data":    revisions,
+				})
+				return
+			}
+
+			// 일반 사용자: count + last_edited_at만 반환
+			var editCount int64
+			db.Table("g5_write_revisions").
+				Where("board_id = ? AND wr_id = ?", slug, postID).
+				Count(&editCount)
+
+			var lastEditedAt *time.Time
+			if editCount > 0 {
+				var t time.Time
+				db.Table("g5_write_revisions").
+					Select("MAX(edited_at)").
+					Where("board_id = ? AND wr_id = ?", slug, postID).
+					Scan(&t)
+				lastEditedAt = &t
+			}
+
 			c.JSON(http.StatusOK, gin.H{
-				"success": true,
-				"data":    []any{},
+				"success":        true,
+				"data":           []any{},
+				"edit_count":     editCount,
+				"last_edited_at": lastEditedAt,
 			})
 		})
 
 		// POST routes still use v2 handlers for now (will be migrated later)
 		v1Boards.POST("/:slug/posts", middleware.JWTAuth(jwtManager), v2Handler.CreatePost)
 		v1Boards.POST("/:slug/posts/:id/comments", middleware.JWTAuth(jwtManager), v2Handler.CreateComment)
+
+		// PUT /api/v1/boards/:slug/posts/:id - Update post
+		v1Boards.PUT("/:slug/posts/:id", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+			slug := c.Param("slug")
+			postID, err := strconv.Atoi(c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid post ID"})
+				return
+			}
+
+			// 게시글 조회
+			post, err := gnuWriteRepo.FindPostByID(slug, postID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "게시글을 찾을 수 없습니다"})
+				return
+			}
+
+			// 작성자 또는 관리자 확인
+			userID := middleware.GetUserID(c)
+			userLevel := middleware.GetUserLevel(c)
+			if post.MbID != userID && userLevel < 10 {
+				c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "수정 권한이 없습니다"})
+				return
+			}
+
+			// 요청 바디 파싱
+			var req struct {
+				Title    *string `json:"title"`
+				Content  *string `json:"content"`
+				Category *string `json:"category"`
+				Link1    *string `json:"link1"`
+				Link2    *string `json:"link2"`
+				Extra1   *string `json:"extra_1"`
+				Extra2   *string `json:"extra_2"`
+				Extra3   *string `json:"extra_3"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "잘못된 요청입니다"})
+				return
+			}
+
+			// 수정 전 내용을 리비전에 저장
+			var nextVersion int
+			db.Raw("SELECT COALESCE(MAX(version), 0) + 1 FROM g5_write_revisions WHERE board_id = ? AND wr_id = ?", slug, postID).Scan(&nextVersion)
+			db.Exec(`INSERT INTO g5_write_revisions
+				(board_id, wr_id, version, change_type, title, content, edited_by, edited_by_name, edited_at)
+				VALUES (?, ?, ?, 'update', ?, ?, ?, ?, NOW())`,
+				slug, postID, nextVersion, post.WrSubject, post.WrContent, userID, post.WrName)
+
+			// 업데이트할 필드 구성
+			updates := map[string]interface{}{}
+			if req.Title != nil {
+				updates["wr_subject"] = *req.Title
+			}
+			if req.Content != nil {
+				updates["wr_content"] = *req.Content
+			}
+			if req.Category != nil {
+				updates["ca_name"] = *req.Category
+			}
+			if req.Link1 != nil {
+				updates["wr_link1"] = *req.Link1
+			}
+			if req.Link2 != nil {
+				updates["wr_link2"] = *req.Link2
+			}
+			if req.Extra1 != nil {
+				updates["wr_1"] = *req.Extra1
+			}
+			if req.Extra2 != nil {
+				updates["wr_2"] = *req.Extra2
+			}
+			if req.Extra3 != nil {
+				updates["wr_3"] = *req.Extra3
+			}
+
+			if len(updates) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "수정할 내용이 없습니다"})
+				return
+			}
+
+			tableName := fmt.Sprintf("g5_write_%s", slug)
+			if err := db.Table(tableName).Where("wr_id = ?", postID).Updates(updates).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "게시글 수정 실패"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"success": true, "message": "수정 완료"})
+		})
+
+		// PUT /api/v1/boards/:slug/posts/:id/comments/:comment_id - Update comment
+		v1Boards.PUT("/:slug/posts/:id/comments/:comment_id", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+			slug := c.Param("slug")
+			commentID, err := strconv.Atoi(c.Param("comment_id"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid comment ID"})
+				return
+			}
+
+			// 댓글 조회
+			comment, err := gnuWriteRepo.FindCommentByID(slug, commentID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "댓글을 찾을 수 없습니다"})
+				return
+			}
+
+			// 작성자 또는 관리자 확인
+			userID := middleware.GetUserID(c)
+			userLevel := middleware.GetUserLevel(c)
+			if comment.MbID != userID && userLevel < 10 {
+				c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "수정 권한이 없습니다"})
+				return
+			}
+
+			// 요청 바디 파싱
+			var req struct {
+				Content string `json:"content" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "내용을 입력해주세요"})
+				return
+			}
+
+			// 수정 전 내용을 리비전에 저장
+			var nextVersion int
+			db.Raw("SELECT COALESCE(MAX(version), 0) + 1 FROM g5_write_revisions WHERE board_id = ? AND wr_id = ?",
+				slug, commentID).Scan(&nextVersion)
+			db.Exec(`INSERT INTO g5_write_revisions
+				(board_id, wr_id, version, change_type, title, content, edited_by, edited_by_name, edited_at)
+				VALUES (?, ?, ?, 'update', NULL, ?, ?, ?, NOW())`,
+				slug, commentID, nextVersion, comment.WrContent, userID, comment.WrName)
+
+			tableName := fmt.Sprintf("g5_write_%s", slug)
+			now := time.Now().Format("2006-01-02 15:04:05")
+			if err := db.Table(tableName).Where("wr_id = ?", commentID).Updates(map[string]interface{}{
+				"wr_content": req.Content,
+				"wr_last":    now,
+			}).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "댓글 수정 실패"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"success": true, "message": "수정 완료"})
+		})
+
+		// GET /api/v1/boards/:slug/posts/:id/comments/:comment_id/revisions - Get comment revision history
+		v1Boards.GET("/:slug/posts/:id/comments/:comment_id/revisions", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+			slug := c.Param("slug")
+			commentID, err := strconv.Atoi(c.Param("comment_id"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid comment ID"})
+				return
+			}
+
+			// 관리자만 리비전 열람 가능
+			userLevel := middleware.GetUserLevel(c)
+			if userLevel < 10 {
+				c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "관리자만 조회 가능합니다"})
+				return
+			}
+
+			type Revision struct {
+				ID           int64     `json:"id"`
+				BoardID      string    `json:"board_id"`
+				WrID         int       `json:"wr_id"`
+				Version      int       `json:"version"`
+				ChangeType   string    `json:"change_type"`
+				Title        *string   `json:"title"`
+				Content      *string   `json:"content"`
+				EditedBy     string    `json:"edited_by"`
+				EditedByName *string   `json:"edited_by_name"`
+				EditedAt     time.Time `json:"edited_at"`
+			}
+
+			var revisions []Revision
+			if err := db.Table("g5_write_revisions").
+				Where("board_id = ? AND wr_id = ?", slug, commentID).
+				Order("version DESC").
+				Find(&revisions).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "리비전 조회 실패"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data":    revisions,
+			})
+		})
 
 		// PATCH /api/v1/boards/:slug/posts/:id/soft-delete - Soft delete post
 		v1Boards.PATCH("/:slug/posts/:id/soft-delete", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
@@ -1274,6 +1576,62 @@ func main() {
 		v1Boards.GET("/:slug/display-settings", displaySettingsHandler.GetDisplaySettings)
 		v1Boards.PUT("/:slug/display-settings", middleware.JWTAuth(jwtManager), displaySettingsHandler.UpdateDisplaySettings)
 
+		// Board extended settings (JSON-based flexible settings)
+		v2ExtendedSettingsRepo := v2repo.NewBoardExtendedSettingsRepository(db)
+		// Auto-migrate the extended settings table
+		if err := db.AutoMigrate(&v2domain.V2BoardExtendedSettings{}); err != nil {
+			fmt.Printf("[WARN] v2_board_extended_settings migration failed: %v\n", err)
+		}
+
+		// GET /api/v1/boards/:slug/extended-settings
+		v1Boards.GET("/:slug/extended-settings", func(c *gin.Context) {
+			slug := c.Param("slug")
+			settings, err := v2ExtendedSettingsRepo.FindByBoardSlug(slug)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "설정 조회 실패"}})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": gin.H{
+				"board_id": settings.BoardID,
+				"settings": settings.Settings,
+			}})
+		})
+
+		// PUT /api/v1/boards/:slug/extended-settings (admin only)
+		nariyaDataPath := os.Getenv("NARIYA_DATA_PATH")
+		if nariyaDataPath == "" {
+			nariyaDataPath = "/home/damoang/www/data/nariya/board"
+		}
+		v1Boards.PUT("/:slug/extended-settings", middleware.JWTAuth(jwtManager), middleware.RequireAdmin(), func(c *gin.Context) {
+			slug := c.Param("slug")
+			var req struct {
+				Settings string `json:"settings" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "요청 형식이 올바르지 않습니다"}})
+				return
+			}
+
+			settings := &v2domain.V2BoardExtendedSettings{
+				BoardID:  slug,
+				Settings: req.Settings,
+			}
+			if err := v2ExtendedSettingsRepo.Upsert(settings); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "설정 저장 실패"}})
+				return
+			}
+
+			// Regenerate nariya PHP files for PHP/gnuboard compatibility
+			if err := v2domain.WriteNariyaPHPFiles(nariyaDataPath, slug, req.Settings); err != nil {
+				fmt.Printf("[WARN] nariya PHP sync failed for %s: %v\n", slug, err)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"data": gin.H{
+				"board_id": settings.BoardID,
+				"settings": settings.Settings,
+			}})
+		})
+
 		// POST /api/v1/boards/:slug/posts/:id/move - Move post to another board (admin only)
 		v1Boards.POST("/:slug/posts/:id/move", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
 			srcBoard := c.Param("slug")
@@ -1431,6 +1789,406 @@ func main() {
 			}
 
 			c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+		})
+
+		// ========== Admin Board Management API (g5_board) ==========
+		adminBoardGroup := router.Group("/api/v1/admin/boards")
+		adminBoardGroup.Use(middleware.JWTAuth(jwtManager), middleware.RequireAdmin())
+
+		// GET /api/v1/admin/boards — 전체 게시판 목록 (관리자용)
+		adminBoardGroup.GET("", func(c *gin.Context) {
+			boards, err := gnuBoardRepo.FindAll()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "게시판 목록 조회 실패"}})
+				return
+			}
+
+			// board_type 매핑 (v2_boards에서 조회)
+			boardTypes := make(map[string]string)
+			var v2BoardRows []struct {
+				Slug      string `gorm:"column:slug"`
+				BoardType string `gorm:"column:board_type"`
+			}
+			if err := db.Table("v2_boards").Select("slug, COALESCE(board_type, 'standard') as board_type").Find(&v2BoardRows).Error; err == nil {
+				for _, row := range v2BoardRows {
+					boardTypes[row.Slug] = row.BoardType
+				}
+			}
+
+			result := make([]gin.H, 0, len(boards))
+			for _, b := range boards {
+				resp := b.ToAdminResponse()
+				item := gin.H{
+					"board_id":       resp.BoardID,
+					"group_id":       resp.GroupID,
+					"subject":        resp.Subject,
+					"admin":          resp.Admin,
+					"device":         resp.Device,
+					"skin":           resp.Skin,
+					"mobile_skin":    resp.MobileSkin,
+					"list_level":     resp.ListLevel,
+					"read_level":     resp.ReadLevel,
+					"write_level":    resp.WriteLevel,
+					"reply_level":    resp.ReplyLevel,
+					"comment_level":  resp.CommentLevel,
+					"upload_level":   resp.UploadLevel,
+					"download_level": resp.DownloadLevel,
+					"write_point":    resp.WritePoint,
+					"comment_point":  resp.CommentPoint,
+					"read_point":     resp.ReadPoint,
+					"download_point": resp.DownloadPoint,
+					"use_category":   resp.UseCategory,
+					"category_list":  resp.CategoryList,
+					"use_good":       resp.UseGood,
+					"use_nogood":     resp.UseNogood,
+					"use_secret":     resp.UseSecret,
+					"use_sns":        resp.UseSns,
+					"page_rows":      resp.PageRows,
+					"upload_count":   resp.UploadCount,
+					"upload_size":    resp.UploadSize,
+					"order":          resp.Order,
+					"count_write":    resp.CountWrite,
+					"count_comment":  resp.CountComment,
+					"notice":         resp.Notice,
+				}
+				if bt, ok := boardTypes[resp.BoardID]; ok {
+					item["board_type"] = bt
+				} else {
+					item["board_type"] = "standard"
+				}
+				result = append(result, item)
+			}
+			c.JSON(http.StatusOK, gin.H{"data": result})
+		})
+
+		// GET /api/v1/admin/boards/:boardId — 게시판 상세 (관리자용)
+		adminBoardGroup.GET(":boardId", func(c *gin.Context) {
+			boardID := c.Param("boardId")
+			board, err := gnuBoardRepo.FindByID(boardID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"message": "게시판을 찾을 수 없습니다"}})
+				return
+			}
+
+			resp := board.ToAdminResponse()
+
+			// board_type from v2_boards
+			var boardType string
+			if err := db.Table("v2_boards").Select("COALESCE(board_type, 'standard')").Where("slug = ?", boardID).Scan(&boardType).Error; err != nil || boardType == "" {
+				boardType = "standard"
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"data": gin.H{
+					"board_id":       resp.BoardID,
+					"group_id":       resp.GroupID,
+					"subject":        resp.Subject,
+					"admin":          resp.Admin,
+					"device":         resp.Device,
+					"skin":           resp.Skin,
+					"mobile_skin":    resp.MobileSkin,
+					"list_level":     resp.ListLevel,
+					"read_level":     resp.ReadLevel,
+					"write_level":    resp.WriteLevel,
+					"reply_level":    resp.ReplyLevel,
+					"comment_level":  resp.CommentLevel,
+					"upload_level":   resp.UploadLevel,
+					"download_level": resp.DownloadLevel,
+					"write_point":    resp.WritePoint,
+					"comment_point":  resp.CommentPoint,
+					"read_point":     resp.ReadPoint,
+					"download_point": resp.DownloadPoint,
+					"use_category":   resp.UseCategory,
+					"category_list":  resp.CategoryList,
+					"use_good":       resp.UseGood,
+					"use_nogood":     resp.UseNogood,
+					"use_secret":     resp.UseSecret,
+					"use_sns":        resp.UseSns,
+					"page_rows":      resp.PageRows,
+					"upload_count":   resp.UploadCount,
+					"upload_size":    resp.UploadSize,
+					"order":          resp.Order,
+					"count_write":    resp.CountWrite,
+					"count_comment":  resp.CountComment,
+					"notice":         resp.Notice,
+					"board_type":     boardType,
+				},
+			})
+		})
+
+		// POST /api/v1/admin/boards — 게시판 생성
+		adminBoardGroup.POST("", func(c *gin.Context) {
+			var req struct {
+				BoardID      string `json:"board_id" binding:"required"`
+				GroupID      string `json:"group_id" binding:"required"`
+				Subject      string `json:"subject" binding:"required"`
+				BoardType    string `json:"board_type"`
+				Skin         string `json:"skin"`
+				MobileSkin   string `json:"mobile_skin"`
+				PageRows     *int   `json:"page_rows"`
+				ListLevel    *int   `json:"list_level"`
+				ReadLevel    *int   `json:"read_level"`
+				WriteLevel   *int   `json:"write_level"`
+				ReplyLevel   *int   `json:"reply_level"`
+				CommentLevel *int   `json:"comment_level"`
+				UploadLevel  *int   `json:"upload_level"`
+				DownloadLevel *int  `json:"download_level"`
+				WritePoint   *int   `json:"write_point"`
+				CommentPoint *int   `json:"comment_point"`
+				DownloadPoint *int  `json:"download_point"`
+				UseCategory  *int   `json:"use_category"`
+				CategoryList string `json:"category_list"`
+				UseGood      *int   `json:"use_good"`
+				UseNogood    *int   `json:"use_nogood"`
+				UploadCount  *int   `json:"upload_count"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "요청 형식이 올바르지 않습니다"}})
+				return
+			}
+
+			// 중복 체크
+			if gnuBoardRepo.Exists(req.BoardID) {
+				c.JSON(http.StatusConflict, gin.H{"error": gin.H{"message": "이미 존재하는 게시판 ID입니다"}})
+				return
+			}
+
+			board := &gnuboard.G5Board{
+				BoTable:     req.BoardID,
+				GrID:        req.GroupID,
+				BoSubject:   req.Subject,
+				BoSkin:      req.Skin,
+				BoMobileSkin: req.MobileSkin,
+				BoCategoryList: req.CategoryList,
+				BoPageRows:  20,
+			}
+			if req.PageRows != nil {
+				board.BoPageRows = *req.PageRows
+			}
+			if req.ListLevel != nil {
+				board.BoListLevel = *req.ListLevel
+			}
+			if req.ReadLevel != nil {
+				board.BoReadLevel = *req.ReadLevel
+			}
+			if req.WriteLevel != nil {
+				board.BoWriteLevel = *req.WriteLevel
+			}
+			if req.ReplyLevel != nil {
+				board.BoReplyLevel = *req.ReplyLevel
+			}
+			if req.CommentLevel != nil {
+				board.BoCommentLevel = *req.CommentLevel
+			}
+			if req.UploadLevel != nil {
+				board.BoUploadLevel = *req.UploadLevel
+			}
+			if req.DownloadLevel != nil {
+				board.BoDownloadLevel = *req.DownloadLevel
+			}
+			if req.WritePoint != nil {
+				board.BoWritePoint = *req.WritePoint
+			}
+			if req.CommentPoint != nil {
+				board.BoCommentPoint = *req.CommentPoint
+			}
+			if req.DownloadPoint != nil {
+				board.BoDownloadPoint = *req.DownloadPoint
+			}
+			if req.UseCategory != nil {
+				board.BoUseCategory = *req.UseCategory
+			}
+			if req.UseGood != nil {
+				board.BoUseGood = *req.UseGood
+			}
+			if req.UseNogood != nil {
+				board.BoUseNogood = *req.UseNogood
+			}
+			if req.UploadCount != nil {
+				board.BoNumListCount = *req.UploadCount
+			}
+
+			if err := gnuBoardRepo.Create(board); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "게시판 생성 실패: " + err.Error()}})
+				return
+			}
+
+			// g5_write_{board_id} 테이블 생성
+			createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS g5_write_%s LIKE g5_write_free`, req.BoardID)
+			if err := db.Exec(createTableSQL).Error; err != nil {
+				// 테이블 생성 실패해도 board는 생성됨 — 로그만 남김
+				fmt.Printf("[WARN] Failed to create write table for %s: %v\n", req.BoardID, err)
+			}
+
+			// v2_boards에 board_type 저장
+			if req.BoardType != "" && req.BoardType != "standard" {
+				db.Exec("INSERT INTO v2_boards (slug, name, board_type, is_active) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE board_type = VALUES(board_type)",
+					req.BoardID, req.Subject, req.BoardType)
+			}
+
+			c.JSON(http.StatusCreated, gin.H{"data": board.ToAdminResponse()})
+		})
+
+		// PUT /api/v1/admin/boards/:boardId — 게시판 수정
+		adminBoardGroup.PUT(":boardId", func(c *gin.Context) {
+			boardID := c.Param("boardId")
+			board, err := gnuBoardRepo.FindByID(boardID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"message": "게시판을 찾을 수 없습니다"}})
+				return
+			}
+
+			var req struct {
+				GroupID       *string `json:"group_id"`
+				Subject       *string `json:"subject"`
+				Admin         *string `json:"admin"`
+				BoardType     *string `json:"board_type"`
+				Skin          *string `json:"skin"`
+				MobileSkin    *string `json:"mobile_skin"`
+				PageRows      *int    `json:"page_rows"`
+				ListLevel     *int    `json:"list_level"`
+				ReadLevel     *int    `json:"read_level"`
+				WriteLevel    *int    `json:"write_level"`
+				ReplyLevel    *int    `json:"reply_level"`
+				CommentLevel  *int    `json:"comment_level"`
+				UploadLevel   *int    `json:"upload_level"`
+				DownloadLevel *int    `json:"download_level"`
+				WritePoint    *int    `json:"write_point"`
+				CommentPoint  *int    `json:"comment_point"`
+				ReadPoint     *int    `json:"read_point"`
+				DownloadPoint *int    `json:"download_point"`
+				UseCategory   *int    `json:"use_category"`
+				CategoryList  *string `json:"category_list"`
+				UseGood       *int    `json:"use_good"`
+				UseNogood     *int    `json:"use_nogood"`
+				UseSecret     *int    `json:"use_secret"`
+				UseSns        *int    `json:"use_sns"`
+				UploadCount   *int    `json:"upload_count"`
+				Order         *int    `json:"order"`
+				Notice        *string `json:"notice"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "요청 형식이 올바르지 않습니다"}})
+				return
+			}
+
+			if req.GroupID != nil {
+				board.GrID = *req.GroupID
+			}
+			if req.Subject != nil {
+				board.BoSubject = *req.Subject
+			}
+			if req.Admin != nil {
+				board.BoAdmin = *req.Admin
+			}
+			if req.Skin != nil {
+				board.BoSkin = *req.Skin
+			}
+			if req.MobileSkin != nil {
+				board.BoMobileSkin = *req.MobileSkin
+			}
+			if req.PageRows != nil {
+				board.BoPageRows = *req.PageRows
+			}
+			if req.ListLevel != nil {
+				board.BoListLevel = *req.ListLevel
+			}
+			if req.ReadLevel != nil {
+				board.BoReadLevel = *req.ReadLevel
+			}
+			if req.WriteLevel != nil {
+				board.BoWriteLevel = *req.WriteLevel
+			}
+			if req.ReplyLevel != nil {
+				board.BoReplyLevel = *req.ReplyLevel
+			}
+			if req.CommentLevel != nil {
+				board.BoCommentLevel = *req.CommentLevel
+			}
+			if req.UploadLevel != nil {
+				board.BoUploadLevel = *req.UploadLevel
+			}
+			if req.DownloadLevel != nil {
+				board.BoDownloadLevel = *req.DownloadLevel
+			}
+			if req.WritePoint != nil {
+				board.BoWritePoint = *req.WritePoint
+			}
+			if req.CommentPoint != nil {
+				board.BoCommentPoint = *req.CommentPoint
+			}
+			if req.ReadPoint != nil {
+				board.BoReadPoint = *req.ReadPoint
+			}
+			if req.DownloadPoint != nil {
+				board.BoDownloadPoint = *req.DownloadPoint
+			}
+			if req.UseCategory != nil {
+				board.BoUseCategory = *req.UseCategory
+			}
+			if req.CategoryList != nil {
+				board.BoCategoryList = *req.CategoryList
+			}
+			if req.UseGood != nil {
+				board.BoUseGood = *req.UseGood
+			}
+			if req.UseNogood != nil {
+				board.BoUseNogood = *req.UseNogood
+			}
+			if req.UseSecret != nil {
+				board.BoUseSecret = *req.UseSecret
+			}
+			if req.UseSns != nil {
+				board.BoUseSns = *req.UseSns
+			}
+			if req.UploadCount != nil {
+				board.BoNumListCount = *req.UploadCount
+			}
+			if req.Order != nil {
+				board.BoOrder = *req.Order
+			}
+			if req.Notice != nil {
+				board.BoNotice = *req.Notice
+			}
+
+			if err := gnuBoardRepo.Update(board); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "게시판 수정 실패"}})
+				return
+			}
+
+			// v2_boards board_type 업데이트
+			if req.BoardType != nil {
+				db.Exec("INSERT INTO v2_boards (slug, name, board_type, is_active) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE board_type = VALUES(board_type)",
+					boardID, board.BoSubject, *req.BoardType)
+			}
+
+			// 캐시 무효화
+			if cacheService != nil {
+				_ = cacheService.InvalidateBoard(c.Request.Context(), boardID)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"data": board.ToAdminResponse()})
+		})
+
+		// DELETE /api/v1/admin/boards/:boardId — 게시판 삭제
+		adminBoardGroup.DELETE(":boardId", func(c *gin.Context) {
+			boardID := c.Param("boardId")
+			if !gnuBoardRepo.Exists(boardID) {
+				c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"message": "게시판을 찾을 수 없습니다"}})
+				return
+			}
+
+			if err := gnuBoardRepo.Delete(boardID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "게시판 삭제 실패"}})
+				return
+			}
+
+			// 캐시 무효화
+			if cacheService != nil {
+				_ = cacheService.InvalidateBoard(c.Request.Context(), boardID)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"data": gin.H{"message": "삭제 완료"}})
 		})
 
 		router.GET("/api/v1/recommended/ai/:period", func(c *gin.Context) {
