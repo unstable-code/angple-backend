@@ -9,6 +9,7 @@ import (
 	"github.com/damoang/angple-backend/internal/middleware"
 	v2repo "github.com/damoang/angple-backend/internal/repository/v2"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // V2Handler handles all v2 API endpoints
@@ -20,6 +21,7 @@ type V2Handler struct {
 	permChecker  middleware.BoardPermissionChecker
 	pointRepo    v2repo.PointRepository
 	revisionRepo v2repo.RevisionRepository
+	gnuDB        *gorm.DB // gnuboard g5_member 조회용
 }
 
 // NewV2Handler creates a new V2Handler
@@ -47,6 +49,29 @@ func (h *V2Handler) SetPointRepository(repo v2repo.PointRepository) {
 // SetRevisionRepository sets the optional revision repository for revision history
 func (h *V2Handler) SetRevisionRepository(repo v2repo.RevisionRepository) {
 	h.revisionRepo = repo
+}
+
+// SetGnuDB sets the gnuboard database connection for mb_id → mb_no lookup
+func (h *V2Handler) SetGnuDB(db *gorm.DB) {
+	h.gnuDB = db
+}
+
+// resolveUserIDToMbNo converts gnuboard mb_id (string) to mb_no (uint64)
+func (h *V2Handler) resolveUserIDToMbNo(mbID string) (uint64, error) {
+	// 먼저 숫자로 직접 변환 시도
+	if id, err := strconv.ParseUint(mbID, 10, 64); err == nil {
+		return id, nil
+	}
+	// 실패 시 g5_member에서 mb_no 조회
+	if h.gnuDB != nil {
+		var mbNo uint64
+		err := h.gnuDB.Table("g5_member").Select("mb_no").Where("mb_id = ?", mbID).Scan(&mbNo).Error
+		if err != nil {
+			return 0, err
+		}
+		return mbNo, nil
+	}
+	return 0, strconv.ErrSyntax
 }
 
 // isOwnerOrAdmin checks if the current user is the owner of the resource or an admin
@@ -566,7 +591,7 @@ func (h *V2Handler) CreateComment(c *gin.Context) {
 		return
 	}
 
-	userID, err := strconv.ParseUint(middleware.GetUserID(c), 10, 64)
+	userID, err := h.resolveUserIDToMbNo(middleware.GetUserID(c))
 	if err != nil {
 		common.V2ErrorResponse(c, http.StatusUnauthorized, "잘못된 사용자 인증 정보", err)
 		return
@@ -621,7 +646,28 @@ func (h *V2Handler) CreateComment(c *gin.Context) {
 		_ = h.pointRepo.AddPoint(userID, board.CommentPoint, "댓글작성", "v2_comments", comment.ID) //nolint:errcheck
 	}
 
-	common.V2Created(c, comment)
+	// FreeComment 형태로 응답 (프론트엔드 호환)
+	mbID := middleware.GetUserID(c)
+	authorName := middleware.GetNickname(c)
+	if authorName == "" && h.gnuDB != nil {
+		h.gnuDB.Table("g5_member").Select("mb_nick").Where("mb_id = ?", mbID).Scan(&authorName)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data": gin.H{
+			"id":         comment.ID,
+			"post_id":    comment.PostID,
+			"content":    comment.Content,
+			"author":     authorName,
+			"author_id":  mbID,
+			"likes":      0,
+			"dislikes":   0,
+			"depth":      comment.Depth,
+			"created_at": comment.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"is_secret":  false,
+		},
+	})
 }
 
 // UpdateComment handles PUT /api/v1/boards/:slug/posts/:id/comments/:comment_id
