@@ -59,6 +59,22 @@ func NewSearchService(esClient *es.Client, db *gorm.DB) *SearchService {
 	return svc
 }
 
+// getSearchableBoardIDs returns board table names where bo_use_search = 1
+func (s *SearchService) getSearchableBoardIDs() ([]string, error) {
+	var boards []struct {
+		BoTable string `gorm:"column:bo_table"`
+	}
+	err := s.db.Table("g5_board").Select("bo_table").Where("bo_use_search = ?", 1).Find(&boards).Error
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(boards))
+	for i, b := range boards {
+		ids[i] = b.BoTable
+	}
+	return ids, nil
+}
+
 // ensureIndices creates ES indices with Korean nori analyzer mappings
 func (s *SearchService) ensureIndices(ctx context.Context) error {
 	postMapping := map[string]interface{}{
@@ -168,7 +184,14 @@ func (s *SearchService) SearchPosts(ctx context.Context, keyword, boardID string
 	}
 
 	var filter []map[string]interface{}
-	if boardID != "" {
+	if boardID == "" {
+		searchableIDs, err := s.getSearchableBoardIDs()
+		if err == nil && len(searchableIDs) > 0 {
+			filter = append(filter, map[string]interface{}{
+				"terms": map[string]interface{}{"board_id": searchableIDs},
+			})
+		}
+	} else {
 		filter = append(filter, map[string]interface{}{
 			"term": map[string]interface{}{"board_id": boardID},
 		})
@@ -213,7 +236,14 @@ func (s *SearchService) SearchComments(ctx context.Context, keyword, boardID str
 	}
 
 	var filter []map[string]interface{}
-	if boardID != "" {
+	if boardID == "" {
+		searchableIDs, err := s.getSearchableBoardIDs()
+		if err == nil && len(searchableIDs) > 0 {
+			filter = append(filter, map[string]interface{}{
+				"terms": map[string]interface{}{"board_id": searchableIDs},
+			})
+		}
+	} else {
 		filter = append(filter, map[string]interface{}{
 			"term": map[string]interface{}{"board_id": boardID},
 		})
@@ -289,6 +319,13 @@ func (s *SearchService) Autocomplete(ctx context.Context, prefix string, size in
 func (s *SearchService) BulkIndexPosts(ctx context.Context, boardID string, limit int) (int, error) {
 	if s.db == nil {
 		return 0, fmt.Errorf("database not available")
+	}
+
+	// Skip boards where bo_use_search is disabled
+	var searchCount int64
+	s.db.Table("g5_board").Where("bo_table = ? AND bo_use_search = ?", boardID, 1).Count(&searchCount)
+	if searchCount == 0 {
+		return 0, nil
 	}
 
 	tableName := fmt.Sprintf("g5_write_%s", boardID)
