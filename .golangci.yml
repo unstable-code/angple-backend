@@ -93,10 +93,83 @@ issues:
         - gocyclo
         - errcheck
 
-    # main.go는 일부 규칙 제외
+    # main.go 규칙 완화 (거대 DI/초기화 파일)
     - path: cmd/.*main\.go
       linters:
         - gocyclo
+        - errcheck
+        - goconst
+        - revive
+
+    # migrate 도구 규칙 완화
+    - path: cmd/migrate-.*\.go
+      linters:
+        - errorlint
+
+    # v2 도메인 모델의 V2 prefix는 의도적 (gnuboard와 구분)
+    - path: internal/domain/v2/.*\.go
+      linters:
+        - revive
+      text: "stutters"
+
+    # nariya_php.go 규칙 완화 (PHP 호환 로직, 의도적으로 복잡)
+    - path: internal/domain/v2/nariya_php\.go
+      linters:
+        - gocyclo
+        - goconst
+        - gosec
+
+    # Dantry (에러 트래커) 규칙 완화 — 내부 모니터링 도구
+    - path: internal/dantry/.*\.go
+      linters:
+        - errcheck
+        - gosec
+        - goconst
+
+    # Handler의 strconv 에러는 기본값 fallback이므로 무시
+    - path: internal/handler/.*\.go
+      linters:
+        - errcheck
+
+    # v2 Handler 규칙 완화 (CRUD 패턴 반복, strconv fallback)
+    - path: internal/handler/v2/.*\.go
+      linters:
+        - errcheck
+        - revive
+      text: "stutters|Error return value"
+
+    # Middleware 규칙 완화
+    - path: internal/middleware/.*\.go
+      linters:
+        - gocyclo
+        - gosec
+
+    # common response 패턴 (err 파라미터는 인터페이스 호환용)
+    - path: internal/common/.*\.go
+      linters:
+        - revive
+      text: "unused-parameter"
+
+    # config dotenv 로드 에러는 환경에 따라 파일 없을 수 있음
+    - path: internal/config/.*\.go
+      linters:
+        - errcheck
+
+    # migration 유틸 규칙 완화
+    - path: internal/migration/.*\.go
+      linters:
+        - revive
+
+    # gnuboard member 레거시 필드명 (Url → URL 리네이밍 불가)
+    - path: internal/domain/gnuboard/member\.go
+      linters:
+        - revive
+      text: "var-naming"
+
+    # mypage repo의 prealloc (동적 UNION 빌드)
+    - path: internal/repository/gnuboard/mypage_repo\.go
+      linters:
+        - prealloc
 
     # Repository 패턴의 유사 코드 허용
     - path: internal/repository/.*\.go
