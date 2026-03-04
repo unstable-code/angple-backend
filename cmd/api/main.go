@@ -1477,13 +1477,68 @@ func main() {
 			// g5_write_{slug} 테이블에 댓글 INSERT
 			now := time.Now()
 			nowStr := now.Format("2006-01-02 15:04:05")
+			tableName := fmt.Sprintf("g5_write_%s", slug)
+
+			// 대댓글 처리 (그누보드 호환)
+			// wr_comment: 루트 댓글이면 0, 대댓글이면 루트 댓글의 wr_id
+			// wr_comment_reply: 계층 경로 문자열 ("", "A", "AB", "AAA" 등)
+			wrComment := 0
+			wrCommentReply := ""
+			depth := 0
+
+			if req.ParentID != nil && *req.ParentID > 0 {
+				// 부모 댓글 조회
+				var parentComment gnuboard.G5Write
+				if err := db.Table(tableName).
+					Where("wr_id = ? AND wr_is_comment = 1", *req.ParentID).
+					First(&parentComment).Error; err == nil {
+
+					if parentComment.WrComment == 0 {
+						// 부모가 루트 댓글 → 루트 댓글 ID를 wr_comment에 설정
+						wrComment = parentComment.WrID
+					} else {
+						// 부모가 이미 대댓글 → 같은 루트 댓글 ID 사용
+						wrComment = parentComment.WrComment
+					}
+
+					// wr_comment_reply 계산: 부모의 reply + 다음 문자
+					// 같은 부모 아래 마지막 대댓글의 reply 값을 찾아 다음 문자 할당
+					parentReply := parentComment.WrCommentReply
+					replyLen := len(parentReply) + 1
+					depth = replyLen
+
+					var lastReply string
+					db.Table(tableName).
+						Select("wr_comment_reply").
+						Where("wr_parent = ? AND wr_is_comment = 1 AND wr_comment = ? AND LENGTH(wr_comment_reply) = ? AND wr_comment_reply LIKE ?",
+							postID, wrComment, replyLen, parentReply+"%").
+						Order("wr_comment_reply DESC").
+						Limit(1).
+						Scan(&lastReply)
+
+					if lastReply == "" {
+						// 첫 번째 대댓글
+						wrCommentReply = parentReply + "A"
+					} else {
+						// 마지막 문자 +1
+						lastChar := lastReply[len(lastReply)-1]
+						if lastChar < 'Z' {
+							wrCommentReply = parentReply + string(lastChar+1)
+						} else {
+							// Z를 넘으면 더 이상 대댓글 불가 (그누보드 제한)
+							c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "더 이상 대댓글을 작성할 수 없습니다."})
+							return
+						}
+					}
+				}
+			}
 
 			comment := gnuboard.G5Write{
 				WrNum:          0,
 				WrParent:       postID,
 				WrIsComment:    1,
-				WrComment:      0,
-				WrCommentReply: "",
+				WrComment:      wrComment,
+				WrCommentReply: wrCommentReply,
 				WrContent:      req.Content,
 				MbID:           mbID,
 				WrName:         authorName,
@@ -1497,8 +1552,13 @@ func main() {
 				return
 			}
 
+			// 루트 댓글인 경우 wr_comment를 자기 자신으로 설정
+			if wrComment == 0 {
+				db.Table(tableName).Where("wr_id = ?", comment.WrID).Update("wr_comment", comment.WrID)
+				wrComment = comment.WrID
+			}
+
 			// 부모 게시글의 wr_comment 카운트 갱신
-			tableName := fmt.Sprintf("g5_write_%s", slug)
 			var commentCount int64
 			db.Table(tableName).Where("wr_parent = ? AND wr_is_comment = 1 AND wr_deleted_at IS NULL", postID).Count(&commentCount)
 			db.Table(tableName).Where("wr_id = ?", postID).Update("wr_comment", commentCount)
@@ -1528,7 +1588,7 @@ func main() {
 					"author_ip":  commentIP,
 					"likes":      0,
 					"dislikes":   0,
-					"depth":      0,
+					"depth":      depth,
 					"created_at": now.Format(time.RFC3339),
 					"is_secret":  false,
 				},
