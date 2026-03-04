@@ -1,6 +1,9 @@
 package v2
 
 import (
+	"encoding/json"
+	"time"
+
 	"github.com/damoang/angple-backend/internal/domain/gnuboard"
 	"gorm.io/gorm"
 )
@@ -12,7 +15,26 @@ type ExpSummary struct {
 	NextLevel    int `json:"next_level"`
 	NextLevelExp int `json:"next_level_exp"`
 	ExpToNext    int `json:"exp_to_next"`
-	Progress     int `json:"progress"` // percentage 0-100
+	Progress     int `json:"level_progress"` // percentage 0-100
+}
+
+// XPConfig represents configurable XP settings (stored in site_settings.settings_json)
+type XPConfig struct {
+	LoginXP int `json:"login_xp"` // XP granted per daily login (default: 500)
+}
+
+// DefaultXPConfig returns the default XP configuration
+func DefaultXPConfig() *XPConfig {
+	return &XPConfig{LoginXP: 500}
+}
+
+// MemberXPInfo represents a member's XP summary for admin listing
+type MemberXPInfo struct {
+	MbID    string `json:"mb_id"`
+	MbNick  string `json:"mb_nick"`
+	AsExp   int    `json:"as_exp"`
+	AsLevel int    `json:"as_level"`
+	MbLevel int    `json:"mb_level"`
 }
 
 // ExpRepository handles experience point data access
@@ -23,6 +45,14 @@ type ExpRepository interface {
 	GetHistory(mbID string, page, limit int) ([]gnuboard.ExpHistory, int64, error)
 	// AddExp adds experience points to a user
 	AddExp(mbID string, point int, content, relTable, relID, action string) error
+	// HasTodayAction checks if the user already has a specific action logged today
+	HasTodayAction(mbID, action string) (bool, error)
+	// ListMembersWithXP returns paginated member list with XP info for admin
+	ListMembersWithXP(search string, page, limit int) ([]MemberXPInfo, int64, error)
+	// GetXPConfig returns the current XP configuration
+	GetXPConfig() (*XPConfig, error)
+	// UpdateXPConfig updates the XP configuration
+	UpdateXPConfig(config *XPConfig) error
 }
 
 type expRepository struct {
@@ -170,4 +200,119 @@ func (r *expRepository) AddExp(mbID string, point int, content, relTable, relID,
 		}
 		return tx.Create(log).Error
 	})
+}
+
+// HasTodayAction checks if the user already has a specific action logged today
+func (r *expRepository) HasTodayAction(mbID, action string) (bool, error) {
+	today := time.Now().Format("2006-01-02")
+	var count int64
+	err := r.db.Model(&gnuboard.G5NaXP{}).
+		Where("mb_id = ? AND xp_rel_action = ? AND DATE(xp_datetime) = ?", mbID, action, today).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// ListMembersWithXP returns paginated member list with XP info for admin
+func (r *expRepository) ListMembersWithXP(search string, page, limit int) ([]MemberXPInfo, int64, error) {
+	query := r.db.Model(&gnuboard.G5Member{}).
+		Select("mb_id, mb_nick, as_exp, as_level, mb_level")
+
+	if search != "" {
+		query = query.Where("mb_id LIKE ? OR mb_nick LIKE ?", "%"+search+"%", "%"+search+"%")
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * limit
+	var members []MemberXPInfo
+	if err := query.Order("as_exp DESC").Offset(offset).Limit(limit).Find(&members).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return members, total, nil
+}
+
+const defaultSiteID = "default"
+
+// siteSettingsJSON is a helper struct to read/write settings_json from site_settings
+type siteSettingsJSON struct {
+	SettingsJSON *string `gorm:"column:settings_json"`
+}
+
+func (siteSettingsJSON) TableName() string {
+	return "site_settings"
+}
+
+// settingsJSONWrapper wraps the full settings_json content (preserves unknown fields)
+type settingsJSONWrapper struct {
+	XPConfig *XPConfig              `json:"xp_config,omitempty"`
+	Extra    map[string]interface{} `json:"-"`
+}
+
+// GetXPConfig reads XP configuration from site_settings.settings_json
+func (r *expRepository) GetXPConfig() (*XPConfig, error) {
+	var row siteSettingsJSON
+	err := r.db.Select("settings_json").Where("site_id = ?", defaultSiteID).First(&row).Error
+	if err != nil {
+		// No row exists — return defaults
+		return DefaultXPConfig(), nil
+	}
+
+	if row.SettingsJSON == nil || *row.SettingsJSON == "" || *row.SettingsJSON == "null" {
+		return DefaultXPConfig(), nil
+	}
+
+	var wrapper settingsJSONWrapper
+	if err := json.Unmarshal([]byte(*row.SettingsJSON), &wrapper); err != nil {
+		return DefaultXPConfig(), nil
+	}
+
+	if wrapper.XPConfig == nil {
+		return DefaultXPConfig(), nil
+	}
+
+	// Validate: if login_xp is 0, return default
+	if wrapper.XPConfig.LoginXP == 0 {
+		wrapper.XPConfig.LoginXP = 500
+	}
+
+	return wrapper.XPConfig, nil
+}
+
+// UpdateXPConfig writes XP configuration to site_settings.settings_json (preserving other fields)
+func (r *expRepository) UpdateXPConfig(config *XPConfig) error {
+	var row siteSettingsJSON
+	err := r.db.Select("settings_json").Where("site_id = ?", defaultSiteID).First(&row).Error
+
+	// Parse existing JSON to preserve other fields
+	existing := make(map[string]interface{})
+	if err == nil && row.SettingsJSON != nil && *row.SettingsJSON != "" && *row.SettingsJSON != "null" {
+		_ = json.Unmarshal([]byte(*row.SettingsJSON), &existing)
+	}
+
+	existing["xp_config"] = config
+	jsonBytes, marshalErr := json.Marshal(existing)
+	if marshalErr != nil {
+		return marshalErr
+	}
+	jsonStr := string(jsonBytes)
+
+	if err != nil {
+		// Row doesn't exist — create it
+		return r.db.Exec(
+			"INSERT INTO site_settings (site_id, settings_json, active_theme) VALUES (?, ?, 'damoang-official')",
+			defaultSiteID, jsonStr,
+		).Error
+	}
+
+	// Update existing row
+	return r.db.Table("site_settings").
+		Where("site_id = ?", defaultSiteID).
+		UpdateColumn("settings_json", jsonStr).Error
 }

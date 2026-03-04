@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/damoang/angple-backend/internal/common"
 	v2domain "github.com/damoang/angple-backend/internal/domain/v2"
@@ -19,13 +20,15 @@ import (
 type V2AuthService struct {
 	userRepo   v2repo.UserRepository
 	jwtManager *jwt.Manager
+	expRepo    v2repo.ExpRepository
 }
 
 // NewV2AuthService creates a new V2AuthService
-func NewV2AuthService(userRepo v2repo.UserRepository, jwtManager *jwt.Manager) *V2AuthService {
+func NewV2AuthService(userRepo v2repo.UserRepository, jwtManager *jwt.Manager, expRepo v2repo.ExpRepository) *V2AuthService {
 	return &V2AuthService{
 		userRepo:   userRepo,
 		jwtManager: jwtManager,
+		expRepo:    expRepo,
 	}
 }
 
@@ -77,6 +80,41 @@ func (s *V2AuthService) Login(username, password string) (*V2LoginResponse, erro
 	refreshToken, err := s.jwtManager.GenerateRefreshToken(userIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
+	}
+
+	// Grant daily login XP (best-effort, errors don't affect login)
+	if s.expRepo != nil {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[v2-auth] login XP panic recovered for user %s: %v", username, r)
+				}
+			}()
+
+			// Read configurable login XP amount
+			xpConfig, cfgErr := s.expRepo.GetXPConfig()
+			if cfgErr != nil {
+				log.Printf("[v2-auth] XP config read failed for user %s: %v", username, cfgErr)
+				return
+			}
+			if xpConfig.LoginXP <= 0 {
+				return // login XP disabled
+			}
+
+			already, err := s.expRepo.HasTodayAction(username, "@login")
+			if err != nil {
+				log.Printf("[v2-auth] login XP check failed for user %s: %v", username, err)
+				return
+			}
+			if already {
+				return
+			}
+			today := time.Now().Format("2006-01-02")
+			content := today + " 로그인"
+			if addErr := s.expRepo.AddExp(username, xpConfig.LoginXP, content, "@login", username, today); addErr != nil {
+				log.Printf("[v2-auth] login XP grant failed for user %s: %v", username, addErr)
+			}
+		}()
 	}
 
 	return &V2LoginResponse{

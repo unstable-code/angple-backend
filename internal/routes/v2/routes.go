@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"github.com/damoang/angple-backend/internal/handler"
 	v2handler "github.com/damoang/angple-backend/internal/handler/v2"
 	"github.com/damoang/angple-backend/internal/middleware"
 	"github.com/damoang/angple-backend/pkg/jwt"
@@ -93,6 +94,22 @@ func SetupAdmin(router *gin.Engine, h *v2handler.AdminHandler, jwtManager *jwt.M
 	admin.GET("/dashboard/stats", h.GetDashboardStats)
 }
 
+// SetupAdminXP configures admin XP management routes
+func SetupAdminXP(router *gin.Engine, h *v2handler.ExpHandler, jwtManager *jwt.Manager) {
+	admin := router.Group("/api/v2/admin/xp")
+	admin.Use(middleware.JWTAuth(jwtManager), middleware.RequireAdmin())
+
+	// XP config (login XP amount, etc.)
+	admin.GET("/config", h.AdminGetXPConfig)
+	admin.PUT("/config", h.AdminUpdateXPConfig)
+
+	// Member XP management
+	adminMembers := admin.Group("/members")
+	adminMembers.GET("", h.AdminListMemberXP)
+	adminMembers.GET("/:mbId/history", h.AdminGetMemberXPHistory)
+	adminMembers.POST("/:mbId/grant", h.AdminGrantXP)
+}
+
 // SetupScrap configures v2 scrap routes
 func SetupScrap(router *gin.Engine, h *v2handler.ScrapHandler, jwtManager *jwt.Manager) {
 	auth := middleware.JWTAuth(jwtManager)
@@ -151,8 +168,8 @@ func SetupInstall(router *gin.Engine, h *v2handler.InstallHandler) {
 	install.POST("/create-admin", h.CreateAdmin)
 }
 
-// SetupMyPage configures user's own data routes (points, exp, etc.)
-func SetupMyPage(router *gin.Engine, pointHandler *v2handler.PointHandler, expHandler *v2handler.ExpHandler, jwtManager *jwt.Manager) {
+// SetupMyPage configures user's own data routes (points, exp, posts, comments, stats)
+func SetupMyPage(router *gin.Engine, pointHandler *v2handler.PointHandler, expHandler *v2handler.ExpHandler, myPageHandler *handler.MyPageHandler, jwtManager *jwt.Manager) {
 	auth := middleware.JWTAuth(jwtManager)
 
 	my := router.Group("/api/v1/my", auth)
@@ -164,6 +181,12 @@ func SetupMyPage(router *gin.Engine, pointHandler *v2handler.PointHandler, expHa
 	// Exp routes
 	my.GET("/exp", expHandler.GetExpSummary)
 	my.GET("/exp/history", expHandler.GetExpHistory)
+
+	// MyPage routes (posts, comments, liked-posts, stats)
+	my.GET("/posts", myPageHandler.GetMyPosts)
+	my.GET("/comments", myPageHandler.GetMyComments)
+	my.GET("/liked-posts", myPageHandler.GetMyLikedPosts)
+	my.GET("/stats", myPageHandler.GetBoardStats)
 }
 
 // SetupDisciplineLog configures discipline log routes (read-only, uses gnuboard g5_write_disciplinelog)
@@ -210,4 +233,17 @@ func SetupLicense(router *gin.Engine, h *v2handler.LicenseHandler) {
 
 	// v2 routes (frontend 호환)
 	router.POST("/api/v2/licenses/verify", h.Verify)
+}
+
+// SetupContent configures content page routes (admin + public)
+func SetupContent(router *gin.Engine, h *v2handler.ContentHandler, jwtManager *jwt.Manager) {
+	// Admin routes (requires authentication + admin)
+	admin := router.Group("/api/v2/admin/contents")
+	admin.Use(middleware.JWTAuth(jwtManager), middleware.RequireAdmin())
+	admin.GET("", h.ListContents)
+	admin.GET("/:id", h.GetContent)
+	admin.PUT("/:id", h.UpdateContent)
+
+	// Public route (no auth required)
+	router.GET("/api/v2/contents/:id", h.GetPublicContent)
 }

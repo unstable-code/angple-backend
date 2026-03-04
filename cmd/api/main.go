@@ -262,7 +262,7 @@ func main() {
 		gnuBoardRepo := gnurepo.NewBoardRepository(db)
 		gnuWriteRepo := gnurepo.NewWriteRepository(db)
 		gnuFileRepo := gnurepo.NewFileRepository(db)
-		_ = gnurepo.NewMemberRepository(db) // For future auth integration
+		gnuMemberRepo := gnurepo.NewMemberRepository(db)
 
 		// v2 Core API
 		v2PostRepo := v2repo.NewPostRepository(db)
@@ -287,18 +287,24 @@ func main() {
 		v2routes.Setup(router, v2Handler, jwtManager, permChecker)
 		v2routes.SetupAdminPosts(router, v2Handler, jwtManager)
 
-		// MyPage routes (point, exp)
+		// MyPage routes (point, exp, posts, comments, stats)
 		v2ExpRepo := v2repo.NewExpRepository(db)
-		pointHandler := v2handler.NewPointHandler(v2PointRepo)
+		gnuPointRepo := v2repo.NewGnuboardPointRepository(db)
+		pointHandler := v2handler.NewPointHandler(gnuPointRepo)
 		expHandler := v2handler.NewExpHandler(v2ExpRepo)
-		v2routes.SetupMyPage(router, pointHandler, expHandler, jwtManager)
+		myPageRepo := gnurepo.NewMyPageRepository(db, gnuBoardRepo)
+		myPageHandler := handler.NewMyPageHandler(myPageRepo)
+		v2routes.SetupMyPage(router, pointHandler, expHandler, myPageHandler, jwtManager)
+
+		// Admin XP management routes
+		v2routes.SetupAdminXP(router, expHandler, jwtManager)
 
 		// DisciplineLog routes (uses gnuboard g5_write_disciplinelog table)
 		disciplineLogHandler := v2handler.NewDisciplineLogHandler(gnuWriteRepo, db)
 		v2routes.SetupDisciplineLog(router, disciplineLogHandler, jwtManager)
 
-		// v2 Auth
-		v2AuthSvc := v2svc.NewV2AuthService(v2UserRepo, jwtManager)
+		// v2 Auth (with ExpRepo for daily login XP)
+		v2AuthSvc := v2svc.NewV2AuthService(v2UserRepo, jwtManager, v2ExpRepo)
 		v2AuthHandler := v2handler.NewV2AuthHandler(v2AuthSvc)
 		v2routes.SetupAuth(router, v2AuthHandler, jwtManager)
 
@@ -837,6 +843,10 @@ func main() {
 		v1Boards := router.Group("/api/v1/boards")
 		v1Boards.Use(middleware.OptionalJWTAuth(jwtManager))
 
+		// Board extended settings repo & write restriction service (used by multiple handlers)
+		v2ExtendedSettingsRepo := v2repo.NewBoardExtendedSettingsRepository(db)
+		writeRestrictionSvc := service.NewBoardWriteRestrictionService(db, v2ExtendedSettingsRepo)
+
 		// GET /api/v1/boards/:slug - Get board info from g5_board
 		v1Boards.GET("/:slug", func(c *gin.Context) {
 			slug := c.Param("slug")
@@ -977,15 +987,17 @@ func main() {
 			}
 
 			// Get post from g5_write_{slug}
-			post, err := gnuWriteRepo.FindPostByID(slug, id)
+			post, err := gnuWriteRepo.FindPostByIDIncludeDeleted(slug, id)
 			if err != nil {
 				c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Post not found"})
 				return
 			}
 
-			// Increment view count
-			if vcErr := gnuWriteRepo.IncrementHit(slug, id); vcErr != nil {
-				log.Printf("IncrementHit error: %v", vcErr)
+			// Increment view count (skip for deleted posts)
+			if post.WrDeletedAt == nil {
+				if vcErr := gnuWriteRepo.IncrementHit(slug, id); vcErr != nil {
+					log.Printf("IncrementHit error: %v", vcErr)
+				}
 			}
 
 			// Check if this post is a notice
@@ -1300,6 +1312,20 @@ func main() {
 						return
 					}
 				}
+			}
+
+			// ExtendedSettings 기반 글쓰기 제한 체크 (범용 - 모든 게시판)
+			restriction, err := writeRestrictionSvc.Check(slug, mbID, userLevel)
+			if err != nil {
+				fmt.Printf("[WARN] write restriction check failed for board %s: %v\n", slug, err)
+				// 제한 체크 실패 시 통과 (기존 동작 유지)
+			} else if !restriction.CanWrite {
+				c.JSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"error":   restriction.Reason,
+					"data":    restriction,
+				})
+				return
 			}
 
 			// 작성자 닉네임 조회
@@ -1857,12 +1883,15 @@ func main() {
 
 		// Board display settings (for admin layout switcher)
 		v2DisplaySettingsRepo := v2repo.NewBoardDisplaySettingsRepository(db)
+		// Auto-migrate to add new columns (e.g. comment_layout)
+		if err := db.AutoMigrate(&v2domain.V2BoardDisplaySettings{}); err != nil {
+			fmt.Printf("[WARN] v2_board_display_settings migration failed: %v\n", err)
+		}
 		displaySettingsHandler := v2handler.NewDisplaySettingsHandler(v2BoardRepo, v2DisplaySettingsRepo)
 		v1Boards.GET("/:slug/display-settings", displaySettingsHandler.GetDisplaySettings)
 		v1Boards.PUT("/:slug/display-settings", middleware.JWTAuth(jwtManager), displaySettingsHandler.UpdateDisplaySettings)
 
 		// Board extended settings (JSON-based flexible settings)
-		v2ExtendedSettingsRepo := v2repo.NewBoardExtendedSettingsRepository(db)
 		// Auto-migrate the extended settings table
 		if err := db.AutoMigrate(&v2domain.V2BoardExtendedSettings{}); err != nil {
 			fmt.Printf("[WARN] v2_board_extended_settings migration failed: %v\n", err)
@@ -1915,6 +1944,20 @@ func main() {
 				"board_id": settings.BoardID,
 				"settings": settings.Settings,
 			}})
+		})
+
+		// GET /api/v1/boards/:slug/write-permission - Check write permission (auth required)
+		v1Boards.GET("/:slug/write-permission", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+			slug := c.Param("slug")
+			mbID := middleware.GetUserID(c)
+			userLevel := middleware.GetUserLevel(c)
+
+			restriction, err := writeRestrictionSvc.Check(slug, mbID, userLevel)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "권한 확인 실패"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": restriction})
 		})
 
 		// POST /api/v1/boards/:slug/posts/:id/move - Move post to another board (admin only)
@@ -2507,6 +2550,16 @@ func main() {
 		v2routes.SetupBlock(router, v2handler.NewBlockHandler(v2BlockRepo), jwtManager)
 		v2routes.SetupMessage(router, v2handler.NewMessageHandler(v2MessageRepo), jwtManager)
 
+		// v1 message routes (uses g5_memo table directly)
+		gnuMemoRepo := gnurepo.NewMemoRepository(db)
+		v1MsgHandler := handler.NewV1MessageHandler(gnuMemoRepo, gnuMemberRepo)
+		v1Messages := router.Group("/api/v1/messages", middleware.JWTAuth(jwtManager))
+		v1Messages.GET("", v1MsgHandler.GetMessages)
+		v1Messages.GET("/unread-count", v1MsgHandler.GetUnreadCount)
+		v1Messages.GET("/:id", v1MsgHandler.GetMessage)
+		v1Messages.POST("", v1MsgHandler.SendMessage)
+		v1Messages.DELETE("/:id", v1MsgHandler.DeleteMessage)
+
 		// Banner, Promotion, License (v1 + v2 dual routes)
 		bannerRepo := v2repo.NewBannerRepository(db)
 		v2routes.SetupBanner(router, v2handler.NewBannerHandler(bannerRepo))
@@ -2515,6 +2568,11 @@ func main() {
 		v2routes.SetupPromotion(router, v2handler.NewPromotionHandler(promotionRepo))
 
 		v2routes.SetupLicense(router, v2handler.NewLicenseHandler())
+
+		// Content pages (g5_content)
+		contentRepo := v2repo.NewContentRepository(db)
+		contentHandler := v2handler.NewContentHandler(contentRepo)
+		v2routes.SetupContent(router, contentHandler, jwtManager)
 
 		// Installation API
 		v2InstallHandler := v2handler.NewInstallHandler(db)
