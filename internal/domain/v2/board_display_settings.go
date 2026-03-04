@@ -10,6 +10,7 @@ type V2BoardDisplaySettings struct {
 	BoardID       string    `gorm:"column:board_id;type:varchar(20);primaryKey" json:"board_id"`
 	ListLayout    string    `gorm:"column:list_layout;type:varchar(30);default:'compact'" json:"list_layout"`
 	ViewLayout    string    `gorm:"column:view_layout;type:varchar(30);default:'basic'" json:"view_layout"`
+	CommentLayout string    `gorm:"column:comment_layout;type:varchar(30);default:'flat'" json:"comment_layout"`
 	ShowPreview   bool      `gorm:"column:show_preview;default:false" json:"show_preview"`
 	PreviewLength int       `gorm:"column:preview_length;default:150" json:"preview_length"`
 	ShowThumbnail bool      `gorm:"column:show_thumbnail;default:false" json:"show_thumbnail"`
@@ -24,6 +25,7 @@ func (V2BoardDisplaySettings) TableName() string { return "v2_board_display_sett
 type BoardDisplaySettingsResponse struct {
 	ListLayout    string `json:"list_layout"`
 	ViewLayout    string `json:"view_layout"`
+	CommentLayout string `json:"comment_layout"`
 	ListStyle     string `json:"list_style,omitempty"` // Legacy compatibility
 	ShowPreview   bool   `json:"show_preview"`
 	PreviewLength int    `json:"preview_length"`
@@ -34,6 +36,7 @@ type BoardDisplaySettingsResponse struct {
 type UpdateDisplaySettingsRequest struct {
 	ListLayout    *string `json:"list_layout,omitempty"`
 	ViewLayout    *string `json:"view_layout,omitempty"`
+	CommentLayout *string `json:"comment_layout,omitempty"`
 	ShowPreview   *bool   `json:"show_preview,omitempty"`
 	PreviewLength *int    `json:"preview_length,omitempty"`
 	ShowThumbnail *bool   `json:"show_thumbnail,omitempty"`
@@ -41,9 +44,14 @@ type UpdateDisplaySettingsRequest struct {
 
 // ToResponse converts V2BoardDisplaySettings to API response format
 func (s *V2BoardDisplaySettings) ToResponse() *BoardDisplaySettingsResponse {
+	commentLayout := s.CommentLayout
+	if commentLayout == "" {
+		commentLayout = "flat"
+	}
 	return &BoardDisplaySettingsResponse{
 		ListLayout:    s.ListLayout,
 		ViewLayout:    s.ViewLayout,
+		CommentLayout: commentLayout,
 		ListStyle:     s.ListLayout, // Legacy compatibility
 		ShowPreview:   s.ShowPreview,
 		PreviewLength: s.PreviewLength,

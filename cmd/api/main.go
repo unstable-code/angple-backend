@@ -11,7 +11,10 @@ import (
 
 	"github.com/damoang/angple-backend/internal/common"
 	"github.com/damoang/angple-backend/internal/config"
+	"github.com/damoang/angple-backend/internal/dantry"
 	"github.com/damoang/angple-backend/internal/domain"
+	gnuboard "github.com/damoang/angple-backend/internal/domain/gnuboard"
+	v2domain "github.com/damoang/angple-backend/internal/domain/v2"
 	"github.com/damoang/angple-backend/internal/handler"
 	v1handler "github.com/damoang/angple-backend/internal/handler/v1"
 	v2handler "github.com/damoang/angple-backend/internal/handler/v2"
@@ -22,8 +25,6 @@ import (
 	pluginstoreRepo "github.com/damoang/angple-backend/internal/pluginstore/repository"
 	pluginstoreSvc "github.com/damoang/angple-backend/internal/pluginstore/service"
 	"github.com/damoang/angple-backend/internal/repository"
-	gnuboard "github.com/damoang/angple-backend/internal/domain/gnuboard"
-	v2domain "github.com/damoang/angple-backend/internal/domain/v2"
 	gnurepo "github.com/damoang/angple-backend/internal/repository/gnuboard"
 	v2repo "github.com/damoang/angple-backend/internal/repository/v2"
 	v2routes "github.com/damoang/angple-backend/internal/routes/v2"
@@ -37,7 +38,6 @@ import (
 	pkglogger "github.com/damoang/angple-backend/pkg/logger"
 	pkgredis "github.com/damoang/angple-backend/pkg/redis"
 	pkgstorage "github.com/damoang/angple-backend/pkg/storage"
-	"github.com/damoang/angple-backend/internal/dantry"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -2247,28 +2247,28 @@ func main() {
 		// POST /api/v1/admin/boards — 게시판 생성
 		adminBoardGroup.POST("", func(c *gin.Context) {
 			var req struct {
-				BoardID      string `json:"board_id" binding:"required"`
-				GroupID      string `json:"group_id" binding:"required"`
-				Subject      string `json:"subject" binding:"required"`
-				BoardType    string `json:"board_type"`
-				Skin         string `json:"skin"`
-				MobileSkin   string `json:"mobile_skin"`
-				PageRows     *int   `json:"page_rows"`
-				ListLevel    *int   `json:"list_level"`
-				ReadLevel    *int   `json:"read_level"`
-				WriteLevel   *int   `json:"write_level"`
-				ReplyLevel   *int   `json:"reply_level"`
-				CommentLevel *int   `json:"comment_level"`
-				UploadLevel  *int   `json:"upload_level"`
-				DownloadLevel *int  `json:"download_level"`
-				WritePoint   *int   `json:"write_point"`
-				CommentPoint *int   `json:"comment_point"`
-				DownloadPoint *int  `json:"download_point"`
-				UseCategory  *int   `json:"use_category"`
-				CategoryList string `json:"category_list"`
-				UseGood      *int   `json:"use_good"`
-				UseNogood    *int   `json:"use_nogood"`
-				UploadCount  *int   `json:"upload_count"`
+				BoardID       string `json:"board_id" binding:"required"`
+				GroupID       string `json:"group_id" binding:"required"`
+				Subject       string `json:"subject" binding:"required"`
+				BoardType     string `json:"board_type"`
+				Skin          string `json:"skin"`
+				MobileSkin    string `json:"mobile_skin"`
+				PageRows      *int   `json:"page_rows"`
+				ListLevel     *int   `json:"list_level"`
+				ReadLevel     *int   `json:"read_level"`
+				WriteLevel    *int   `json:"write_level"`
+				ReplyLevel    *int   `json:"reply_level"`
+				CommentLevel  *int   `json:"comment_level"`
+				UploadLevel   *int   `json:"upload_level"`
+				DownloadLevel *int   `json:"download_level"`
+				WritePoint    *int   `json:"write_point"`
+				CommentPoint  *int   `json:"comment_point"`
+				DownloadPoint *int   `json:"download_point"`
+				UseCategory   *int   `json:"use_category"`
+				CategoryList  string `json:"category_list"`
+				UseGood       *int   `json:"use_good"`
+				UseNogood     *int   `json:"use_nogood"`
+				UploadCount   *int   `json:"upload_count"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "요청 형식이 올바르지 않습니다"}})
@@ -2282,13 +2282,13 @@ func main() {
 			}
 
 			board := &gnuboard.G5Board{
-				BoTable:     req.BoardID,
-				GrID:        req.GroupID,
-				BoSubject:   req.Subject,
-				BoSkin:      req.Skin,
-				BoMobileSkin: req.MobileSkin,
+				BoTable:        req.BoardID,
+				GrID:           req.GroupID,
+				BoSubject:      req.Subject,
+				BoSkin:         req.Skin,
+				BoMobileSkin:   req.MobileSkin,
 				BoCategoryList: req.CategoryList,
-				BoPageRows:  20,
+				BoPageRows:     20,
 			}
 			if req.PageRows != nil {
 				board.BoPageRows = *req.PageRows
@@ -2794,7 +2794,7 @@ func main() {
 			newMbIDs += currentUserID
 
 			if err := db.Table("g5_poll").Where("po_id = ?", pollID).Updates(map[string]interface{}{
-				cntColumn: gorm.Expr(cntColumn+" + 1"),
+				cntColumn: gorm.Expr(cntColumn + " + 1"),
 				"mb_ids":  newMbIDs,
 			}).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "투표 처리 실패"})

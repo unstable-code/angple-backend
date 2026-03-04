@@ -80,6 +80,9 @@ func (h *DisplaySettingsHandler) UpdateDisplaySettings(c *gin.Context) {
 	if req.ViewLayout != nil {
 		settings.ViewLayout = *req.ViewLayout
 	}
+	if req.CommentLayout != nil {
+		settings.CommentLayout = *req.CommentLayout
+	}
 	if req.ShowPreview != nil {
 		settings.ShowPreview = *req.ShowPreview
 	}

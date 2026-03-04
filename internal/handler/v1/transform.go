@@ -177,6 +177,10 @@ func TransformToV1Board(b *gnuboard.G5Board) map[string]any {
 
 // TransformToV1Member converts G5Member to v1 API response format
 func TransformToV1Member(m *gnuboard.G5Member) map[string]any {
+	avatarURL := m.MbImageUrl
+	if avatarURL == "" {
+		avatarURL = m.MbIconPath
+	}
 	return map[string]any{
 		"id":         m.MbID,
 		"username":   m.MbID,
@@ -184,7 +188,7 @@ func TransformToV1Member(m *gnuboard.G5Member) map[string]any {
 		"email":      m.MbEmail,
 		"level":      m.MbLevel,
 		"point":      m.MbPoint,
-		"avatar_url": m.MbIconPath,
+		"avatar_url": avatarURL,
 		"profile":    m.MbProfile,
 		"created_at": m.MbDatetime.Format(time.RFC3339),
 	}

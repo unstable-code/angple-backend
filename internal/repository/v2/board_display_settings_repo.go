@@ -30,6 +30,7 @@ func (r *boardDisplaySettingsRepository) FindByBoardSlug(slug string) (*v2.V2Boa
 			BoardID:       slug,
 			ListLayout:    "compact",
 			ViewLayout:    "basic",
+			CommentLayout: "flat",
 			ShowPreview:   false,
 			PreviewLength: 150,
 			ShowThumbnail: false,

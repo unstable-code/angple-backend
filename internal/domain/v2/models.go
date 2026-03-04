@@ -69,14 +69,14 @@ func (V2Board) TableName() string { return "v2_boards" }
 
 // V2Post represents a post in the v2 schema
 type V2Post struct {
-	ID           uint64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	BoardID      uint64    `gorm:"column:board_id;index" json:"board_id"`
-	UserID       uint64    `gorm:"column:user_id;index" json:"user_id"`
-	Title        string    `gorm:"column:title;type:varchar(255)" json:"title"`
-	Content      string    `gorm:"column:content;type:mediumtext" json:"content"`
-	Status       string    `gorm:"column:status;type:enum('draft','published','deleted');default:'published'" json:"status"`
-	ViewCount    uint      `gorm:"column:view_count;default:0" json:"view_count"`
-	CommentCount uint      `gorm:"column:comment_count;default:0" json:"comment_count"`
+	ID           uint64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	BoardID      uint64     `gorm:"column:board_id;index" json:"board_id"`
+	UserID       uint64     `gorm:"column:user_id;index" json:"user_id"`
+	Title        string     `gorm:"column:title;type:varchar(255)" json:"title"`
+	Content      string     `gorm:"column:content;type:mediumtext" json:"content"`
+	Status       string     `gorm:"column:status;type:enum('draft','published','deleted');default:'published'" json:"status"`
+	ViewCount    uint       `gorm:"column:view_count;default:0" json:"view_count"`
+	CommentCount uint       `gorm:"column:comment_count;default:0" json:"comment_count"`
 	IsNotice     bool       `gorm:"column:is_notice;default:false" json:"is_notice"`
 	IsSecret     bool       `gorm:"column:is_secret;default:false" json:"is_secret"`
 	DeletedAt    *time.Time `gorm:"column:deleted_at" json:"deleted_at,omitempty"`
@@ -89,12 +89,12 @@ func (V2Post) TableName() string { return "v2_posts" }
 
 // V2Comment represents a comment in the v2 schema
 type V2Comment struct {
-	ID        uint64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	PostID    uint64    `gorm:"column:post_id;index" json:"post_id"`
-	UserID    uint64    `gorm:"column:user_id;index" json:"user_id"`
-	ParentID  *uint64   `gorm:"column:parent_id" json:"parent_id,omitempty"`
-	Content   string    `gorm:"column:content;type:text" json:"content"`
-	Depth     uint8     `gorm:"column:depth;default:0" json:"depth"`
+	ID        uint64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	PostID    uint64     `gorm:"column:post_id;index" json:"post_id"`
+	UserID    uint64     `gorm:"column:user_id;index" json:"user_id"`
+	ParentID  *uint64    `gorm:"column:parent_id" json:"parent_id,omitempty"`
+	Content   string     `gorm:"column:content;type:text" json:"content"`
+	Depth     uint8      `gorm:"column:depth;default:0" json:"depth"`
 	Status    string     `gorm:"column:status;type:enum('active','deleted');default:'active'" json:"status"`
 	DeletedAt *time.Time `gorm:"column:deleted_at" json:"deleted_at,omitempty"`
 	DeletedBy *uint64    `gorm:"column:deleted_by" json:"deleted_by,omitempty"`

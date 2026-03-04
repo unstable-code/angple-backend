@@ -199,13 +199,13 @@ type extendedSettings struct {
 }
 
 type commentSettings struct {
-	UseRecommend    bool   `json:"useRecommend"`
-	UseDislike      bool   `json:"useDislike"`
-	AuthorOnly      bool   `json:"authorOnly"`
-	Paging          string `json:"paging"`
-	PageSize        int    `json:"pageSize"`
-	ImageSizeLimitMB int   `json:"imageSizeLimitMB"`
-	AutoEmbed       bool   `json:"autoEmbed"`
+	UseRecommend     bool   `json:"useRecommend"`
+	UseDislike       bool   `json:"useDislike"`
+	AuthorOnly       bool   `json:"authorOnly"`
+	Paging           string `json:"paging"`
+	PageSize         int    `json:"pageSize"`
+	ImageSizeLimitMB int    `json:"imageSizeLimitMB"`
+	AutoEmbed        bool   `json:"autoEmbed"`
 }
 
 type luckySettings struct {
@@ -235,11 +235,11 @@ type notificationSettings struct {
 }
 
 type writingSettings struct {
-	MaxPosts          int    `json:"maxPosts"`
-	AllowedLevels     string `json:"allowedLevels"`
-	RestrictedUsers   bool   `json:"restrictedUsers"`
-	MemberOnly        bool   `json:"memberOnly"`
-	MemberOnlyPermit  string `json:"memberOnlyPermit,omitempty"`
+	MaxPosts            int    `json:"maxPosts"`
+	AllowedLevels       string `json:"allowedLevels"`
+	RestrictedUsers     bool   `json:"restrictedUsers"`
+	MemberOnly          bool   `json:"memberOnly"`
+	MemberOnlyPermit    string `json:"memberOnlyPermit,omitempty"`
 	AllowedMembersOne   string `json:"allowedMembersOne"`
 	AllowedMembersTwo   string `json:"allowedMembersTwo"`
 	AllowedMembersThree string `json:"allowedMembersThree"`
@@ -253,8 +253,8 @@ type skinSettings struct {
 }
 
 type promotionSettings struct {
-	InsertIndex *int `json:"insertIndex"`
-	InsertCount *int `json:"insertCount"`
+	InsertIndex  *int `json:"insertIndex"`
+	InsertCount  *int `json:"insertCount"`
 	MinPostCount *int `json:"minPostCount"`
 }
 
@@ -267,13 +267,13 @@ func convertToExtendedSettings(php map[string]string) *extendedSettings {
 		commentPaging = "newest"
 	}
 	s.Comment = &commentSettings{
-		UseRecommend:    php["comment_good"] == "1",
-		UseDislike:      false,
-		AuthorOnly:      php["author_only_comment"] == "1",
-		Paging:          commentPaging,
-		PageSize:        atoi(php["comment_rows"], 5000),
+		UseRecommend:     php["comment_good"] == "1",
+		UseDislike:       false,
+		AuthorOnly:       php["author_only_comment"] == "1",
+		Paging:           commentPaging,
+		PageSize:         atoi(php["comment_rows"], 5000),
 		ImageSizeLimitMB: atoi(php["comment_image_size"], 0),
-		AutoEmbed:       php["comment_convert"] == "1",
+		AutoEmbed:        php["comment_convert"] == "1",
 	}
 
 	// Lucky settings
@@ -309,11 +309,11 @@ func convertToExtendedSettings(php map[string]string) *extendedSettings {
 
 	// Writing settings
 	s.Writing = &writingSettings{
-		MaxPosts:          atoi(php["limit_max_write"], 0),
-		AllowedLevels:     php["writeable_level"],
-		RestrictedUsers:   php["check_write_permit"] == "1",
-		MemberOnly:        php["check_member_only"] == "1",
-		MemberOnlyPermit:  php["member_only_permit"],
+		MaxPosts:            atoi(php["limit_max_write"], 0),
+		AllowedLevels:       php["writeable_level"],
+		RestrictedUsers:     php["check_write_permit"] == "1",
+		MemberOnly:          php["check_member_only"] == "1",
+		MemberOnlyPermit:    php["member_only_permit"],
 		AllowedMembersOne:   php["bo_write_allow_one"],
 		AllowedMembersTwo:   php["bo_write_allow_two"],
 		AllowedMembersThree: php["bo_write_allow_three"],

@@ -25,17 +25,17 @@ func (G5BoardFile) TableName() string {
 
 // FileResponse is the API response format for file attachments
 type FileResponse struct {
-	ID             int    `json:"id"`               // bf_no
-	OriginalName   string `json:"original_name"`    // bf_source
-	FileName       string `json:"filename"`         // bf_file
-	Description    string `json:"description"`      // bf_content
-	URL            string `json:"url"`              // 다운로드/표시 URL
-	ThumbnailURL   string `json:"thumbnail_url"`    // 썸네일 URL (이미지인 경우)
-	Size           int64  `json:"size"`             // bf_filesize
-	Width          int    `json:"width,omitempty"`  // bf_width
-	Height         int    `json:"height,omitempty"` // bf_height
-	IsImage        bool   `json:"is_image"`         // 이미지 여부
-	DownloadCount  int    `json:"download_count"`   // bf_download
+	ID            int    `json:"id"`               // bf_no
+	OriginalName  string `json:"original_name"`    // bf_source
+	FileName      string `json:"filename"`         // bf_file
+	Description   string `json:"description"`      // bf_content
+	URL           string `json:"url"`              // 다운로드/표시 URL
+	ThumbnailURL  string `json:"thumbnail_url"`    // 썸네일 URL (이미지인 경우)
+	Size          int64  `json:"size"`             // bf_filesize
+	Width         int    `json:"width,omitempty"`  // bf_width
+	Height        int    `json:"height,omitempty"` // bf_height
+	IsImage       bool   `json:"is_image"`         // 이미지 여부
+	DownloadCount int    `json:"download_count"`   // bf_download
 }
 
 // ToFileResponse converts G5BoardFile to API response format

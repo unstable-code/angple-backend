@@ -21,24 +21,26 @@ func (G5NaXP) TableName() string {
 
 // ExpHistory represents an experience history item for API response
 type ExpHistory struct {
-	ID        int       `json:"id"`
-	Content   string    `json:"content"`
-	Point     int       `json:"point"`
-	RelTable  string    `json:"rel_table"`
-	RelID     string    `json:"rel_id"`
-	Action    string    `json:"action"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          int       `json:"id"`
+	MbID        string    `json:"mb_id"`
+	ExpContent  string    `json:"exp_content"`
+	ExpPoint    int       `json:"exp_point"`
+	ExpDatetime time.Time `json:"exp_datetime"`
+	RelTable    string    `json:"exp_rel_table"`
+	RelID       string    `json:"exp_rel_id"`
+	Action      string    `json:"exp_rel_action"`
 }
 
 // ToExpHistory converts G5NaXP to ExpHistory
 func (x *G5NaXP) ToExpHistory() ExpHistory {
 	return ExpHistory{
-		ID:        x.XpID,
-		Content:   x.XpContent,
-		Point:     x.XpPoint,
-		RelTable:  x.XpRelTable,
-		RelID:     x.XpRelID,
-		Action:    x.XpRelAction,
-		CreatedAt: x.XpDatetime,
+		ID:          x.XpID,
+		MbID:        x.MbID,
+		ExpContent:  x.XpContent,
+		ExpPoint:    x.XpPoint,
+		ExpDatetime: x.XpDatetime,
+		RelTable:    x.XpRelTable,
+		RelID:       x.XpRelID,
+		Action:      x.XpRelAction,
 	}
 }

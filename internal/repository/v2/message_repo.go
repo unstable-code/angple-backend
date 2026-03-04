@@ -15,6 +15,7 @@ type MessageRepository interface {
 	FindSent(userID uint64, page, limit int) ([]*v2.V2Message, int64, error)
 	MarkAsRead(id uint64) error
 	DeleteForUser(id, userID uint64) error
+	CountUnread(userID uint64) (int64, error)
 }
 
 type messageRepository struct {
@@ -84,4 +85,13 @@ func (r *messageRepository) DeleteForUser(id, userID uint64) error {
 		return r.db.Model(&v2.V2Message{}).Where("id = ?", id).Update("deleted_by_receiver", true).Error
 	}
 	return gorm.ErrRecordNotFound
+}
+
+// CountUnread returns the number of unread messages for the user
+func (r *messageRepository) CountUnread(userID uint64) (int64, error) {
+	var count int64
+	err := r.db.Model(&v2.V2Message{}).
+		Where("receiver_id = ? AND is_read = false AND deleted_by_receiver = false", userID).
+		Count(&count).Error
+	return count, err
 }
