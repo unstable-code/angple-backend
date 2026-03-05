@@ -792,6 +792,41 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"success": true, "data": nil})
 		})
 
+		// GET /api/v1/members/batch/memo?ids=user1,user2,... — 배치 메모 조회
+		router.GET("/api/v1/members/batch/memo", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+			currentUserID := middleware.GetUserID(c)
+			idsParam := c.Query("ids")
+			if idsParam == "" {
+				c.JSON(http.StatusOK, gin.H{"success": true, "data": map[string]interface{}{}})
+				return
+			}
+
+			ids := strings.Split(idsParam, ",")
+			if len(ids) > 100 {
+				ids = ids[:100]
+			}
+
+			type memoRow struct {
+				TargetID   string  `gorm:"column:target_member_id" json:"target_id"`
+				Memo       string  `gorm:"column:memo" json:"content"`
+				MemoDetail *string `gorm:"column:memo_detail" json:"memo_detail"`
+				Color      string  `gorm:"column:color" json:"color"`
+			}
+			var memos []memoRow
+			db.Table("g5_member_memo").
+				Select("target_member_id, memo, memo_detail, color").
+				Where("member_id = ? AND target_member_id IN ?", currentUserID, ids).
+				Find(&memos)
+
+			result := make(map[string]interface{}, len(memos))
+			for _, m := range memos {
+				if m.Memo != "" {
+					result[m.TargetID] = m
+				}
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+		})
+
 		// Admin member memo CRUD
 		adminMemoGroup := router.Group("/api/v1/admin/members")
 		adminMemoGroup.Use(middleware.JWTAuth(jwtManager), middleware.RequireAdmin())
@@ -2070,8 +2105,14 @@ func main() {
 			fmt.Printf("[WARN] v2_board_display_settings migration failed: %v\n", err)
 		}
 		displaySettingsHandler := v2handler.NewDisplaySettingsHandler(v2BoardRepo, v2DisplaySettingsRepo)
-		v1Boards.GET("/:slug/display-settings", displaySettingsHandler.GetDisplaySettings)
-		v1Boards.PUT("/:slug/display-settings", middleware.JWTAuth(jwtManager), displaySettingsHandler.UpdateDisplaySettings)
+		v1Boards.GET("/:slug/display-settings", middleware.CacheWithTTL(redisClient, 5*time.Minute), displaySettingsHandler.GetDisplaySettings)
+		v1Boards.PUT("/:slug/display-settings", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+			displaySettingsHandler.UpdateDisplaySettings(c)
+			// 변경 시 캐시 무효화
+			if c.Writer.Status() == http.StatusOK {
+				middleware.InvalidateCache(redisClient, "api:cache:")
+			}
+		})
 
 		// Board extended settings (JSON-based flexible settings)
 		// Auto-migrate the extended settings table
