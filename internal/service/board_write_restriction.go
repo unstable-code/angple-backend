@@ -70,6 +70,11 @@ func (s *BoardWriteRestrictionService) Check(boardSlug, memberID string, memberL
 		return &WriteRestrictionResult{CanWrite: true, Remaining: -1, DailyLimit: 0}, nil
 	}
 
+	// 최고관리자(레벨 10 이상)는 모든 글쓰기 제한 바이패스
+	if memberLevel >= 10 {
+		return &WriteRestrictionResult{CanWrite: true, Remaining: -1, DailyLimit: 0}, nil
+	}
+
 	// 1. allowedLevels check
 	if writing.AllowedLevels != "" {
 		levels := parseCommaSeparatedInts(writing.AllowedLevels)
