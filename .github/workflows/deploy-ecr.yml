@@ -1,8 +1,6 @@
 name: Deploy ECR to Prod
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       confirm:
@@ -18,10 +16,6 @@ on:
           - api
           - gateway
           - all
-      image_tag:
-        description: '배포할 이미지 태그 (비워두면 latest)'
-        required: false
-        type: string
 
 permissions:
   id-token: write
@@ -33,10 +27,10 @@ env:
   ECR_REGISTRY: 891376997084.dkr.ecr.ap-northeast-2.amazonaws.com
 
 jobs:
-  build:
-    name: Build & Push to ECR
+  build-and-deploy:
+    name: Build & Deploy
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: inputs.confirm == 'deploy'
 
     steps:
       - uses: actions/checkout@v6
@@ -58,6 +52,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push API
+        if: inputs.target == 'api' || inputs.target == 'all'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -70,64 +65,24 @@ jobs:
           cache-from: type=gha,scope=backend-api
           cache-to: type=gha,mode=max,scope=backend-api
 
-      - name: Notify build ready (Telegram)
-        if: success()
-        run: |
-          SHORT_SHA="${{ github.sha }}"
-          SHORT_SHA="${SHORT_SHA:0:7}"
-          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
-          MSG="📦 백엔드 이미지 빌드 완료
-
-          커밋: ${SHORT_SHA} - ${COMMIT_MSG}
-          이미지: angple-backend:sha-${SHORT_SHA}
-
-          ➡️ ops.damoang.net/deploy 에서 배포 가능"
-
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
-            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            --data-urlencode "text=${MSG}" >/dev/null 2>&1 || true
-
-      - name: Notify build ready (Discord)
-        if: success()
-        run: |
-          SHORT_SHA="${{ github.sha }}"
-          SHORT_SHA="${SHORT_SHA:0:7}"
-          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
-
-          curl -s -H "Content-Type: application/json" \
-            -d "{\"embeds\":[{\"title\":\"📦 백엔드 이미지 빌드 완료\",\"description\":\"커밋: \`${SHORT_SHA}\` - ${COMMIT_MSG}\\n이미지: \`angple-backend:sha-${SHORT_SHA}\`\\n\\n➡️ [배포 대시보드](https://ops.damoang.net/deploy)에서 배포 가능\",\"color\":3447003,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}]}" \
-            "${{ secrets.DISCORD_WEBHOOK }}" >/dev/null 2>&1 || true
-
-  deploy:
-    name: Deploy to K8s
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'deploy'
-
-    steps:
-      - uses: actions/checkout@v4
+      - name: Build and push Gateway
+        if: inputs.target == 'gateway' || inputs.target == 'all'
+        uses: docker/build-push-action@v6
         with:
-          fetch-depth: 1
-
-      - name: Set image tag
-        id: tag
-        run: |
-          if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "TAG=${{ inputs.image_tag }}" >> $GITHUB_OUTPUT
-          else
-            SHA=$(git rev-parse HEAD)
-            echo "TAG=sha-${SHA}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: arn:aws:iam::891376997084:role/GitHubActionsDeployRole
-          aws-region: ${{ env.AWS_REGION }}
+          context: .
+          file: deployments/docker/gateway.Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:gateway-sha-${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:gateway-latest
+          cache-from: type=gha,scope=backend-gateway
+          cache-to: type=gha,mode=max,scope=backend-gateway
 
       - name: Deploy API via SSM
         if: inputs.target == 'api' || inputs.target == 'all'
         env:
-          IMAGE_TAG: ${{ steps.tag.outputs.TAG }}
+          IMAGE_TAG: sha-${{ github.sha }}
         run: |
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "i-038a1d1f00798d94b" \
@@ -173,7 +128,7 @@ jobs:
       - name: Deploy Gateway via SSM
         if: inputs.target == 'gateway' || inputs.target == 'all'
         env:
-          IMAGE_TAG: gateway-${{ steps.tag.outputs.TAG }}
+          IMAGE_TAG: gateway-sha-${{ github.sha }}
         run: |
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "i-038a1d1f00798d94b" \
@@ -215,3 +170,29 @@ jobs:
               --output text
             exit 1
           fi
+
+      - name: Notify deploy complete (Telegram)
+        if: success()
+        run: |
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
+          MSG="🚀 백엔드 배포 완료 (${{ inputs.target }})
+
+          커밋: ${SHORT_SHA} - ${COMMIT_MSG}
+          이미지: angple-backend:sha-${SHORT_SHA}"
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode "text=${MSG}" >/dev/null 2>&1 || true
+
+      - name: Notify deploy complete (Discord)
+        if: success()
+        run: |
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
+
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"embeds\":[{\"title\":\"🚀 백엔드 배포 완료 (${{ inputs.target }})\",\"description\":\"커밋: \`${SHORT_SHA}\` - ${COMMIT_MSG}\\n이미지: \`angple-backend:sha-${SHORT_SHA}\`\",\"color\":3066993,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}]}" \
+            "${{ secrets.DISCORD_WEBHOOK }}" >/dev/null 2>&1 || true
