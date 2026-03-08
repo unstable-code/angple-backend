@@ -6,6 +6,7 @@ import (
 	"github.com/damoang/angple-backend/internal/middleware"
 	"github.com/damoang/angple-backend/pkg/jwt"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SetupAuth configures v2 authentication routes
@@ -25,9 +26,10 @@ func SetupAuth(router *gin.Engine, h *v2handler.V2AuthHandler, jwtManager *jwt.M
 }
 
 // Setup configures v2 API routes (new DB schema)
-func Setup(router *gin.Engine, h *v2handler.V2Handler, jwtManager *jwt.Manager, boardPermChecker middleware.BoardPermissionChecker) {
+func Setup(router *gin.Engine, h *v2handler.V2Handler, jwtManager *jwt.Manager, boardPermChecker middleware.BoardPermissionChecker, gnuDB *gorm.DB) {
 	api := router.Group("/api/v2")
 	auth := middleware.JWTAuth(jwtManager)
+	banCheck := middleware.BanCheck(gnuDB)
 
 	// Users
 	users := api.Group("/users")
@@ -38,15 +40,16 @@ func Setup(router *gin.Engine, h *v2handler.V2Handler, jwtManager *jwt.Manager, 
 	// Boards (OptionalJWTAuth로 인증된 사용자에게 permissions 제공)
 	boards := api.Group("/boards")
 	boards.Use(middleware.OptionalJWTAuth(jwtManager))
+	boards.Use(middleware.ArchiveBoardCheck())
 	boards.GET("", h.ListBoards)
 	boards.GET("/:slug", h.GetBoard)
 
 	// Posts (nested under boards)
 	boardPosts := boards.Group("/:slug/posts")
 	boardPosts.GET("", h.ListPosts)
-	boardPosts.POST("", auth, middleware.RequireWrite(boardPermChecker), h.CreatePost)
+	boardPosts.POST("", auth, banCheck, middleware.RequireWrite(boardPermChecker), h.CreatePost)
 	boardPosts.GET("/:id", h.GetPost)
-	boardPosts.PUT("/:id", auth, h.UpdatePost)
+	boardPosts.PUT("/:id", auth, banCheck, h.UpdatePost)
 	boardPosts.DELETE("/:id", auth, h.DeletePost)
 	boardPosts.PATCH("/:id/soft-delete", auth, h.SoftDeletePost)
 	boardPosts.POST("/:id/restore", auth, middleware.RequireAdmin(), h.RestorePost)
@@ -57,8 +60,8 @@ func Setup(router *gin.Engine, h *v2handler.V2Handler, jwtManager *jwt.Manager, 
 	// Comments (nested under posts)
 	comments := boardPosts.Group("/:id/comments")
 	comments.GET("", h.ListComments)
-	comments.POST("", auth, middleware.RequireComment(boardPermChecker), h.CreateComment)
-	comments.PUT("/:comment_id", auth, h.UpdateComment)
+	comments.POST("", auth, banCheck, middleware.RequireComment(boardPermChecker), h.CreateComment)
+	comments.PUT("/:comment_id", auth, banCheck, h.UpdateComment)
 	comments.DELETE("/:comment_id", auth, h.DeleteComment)
 }
 
