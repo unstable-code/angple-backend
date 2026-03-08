@@ -240,6 +240,9 @@ func main() {
 	// IP Protection
 	ipProtectCfg := middleware.LoadIPProtectionConfig()
 
+	// Ban check middleware (제재 회원 글/댓글 작성 차단)
+	banCheck := middleware.BanCheck(db)
+
 	// Plugin HookManager
 	pluginLogger := plugin.NewDefaultLogger("plugin")
 	_ = plugin.NewHookManager(pluginLogger)
@@ -387,7 +390,7 @@ func main() {
 		// expSvc := v2svc.NewExpService(v2UserRepo)
 		// v2Handler.SetExpService(expSvc)
 
-		v2routes.Setup(router, v2Handler, jwtManager, permChecker)
+		v2routes.Setup(router, v2Handler, jwtManager, permChecker, db)
 		v2routes.SetupAdminPosts(router, v2Handler, jwtManager)
 
 		// MyPage routes (point, exp, posts, comments, stats)
@@ -1218,6 +1221,7 @@ func main() {
 		// v1 boards routes → use Gnuboard g5_* tables
 		v1Boards := router.Group("/api/v1/boards")
 		v1Boards.Use(middleware.OptionalJWTAuth(jwtManager))
+		v1Boards.Use(middleware.ArchiveBoardCheck())
 
 		// Board extended settings repo & write restriction service (used by multiple handlers)
 		v2ExtendedSettingsRepo := v2repo.NewBoardExtendedSettingsRepository(db)
@@ -1730,7 +1734,7 @@ func main() {
 		})
 
 		// POST /api/v1/boards/:slug/posts - Create post in g5_write_{slug}
-		v1Boards.POST("/:slug/posts", middleware.JWTAuth(jwtManager), middleware.IPProtection(ipProtectCfg), func(c *gin.Context) {
+		v1Boards.POST("/:slug/posts", middleware.JWTAuth(jwtManager), banCheck, middleware.IPProtection(ipProtectCfg), func(c *gin.Context) {
 			slug := c.Param("slug")
 
 			// 게시판 설정 조회
@@ -1960,7 +1964,7 @@ func main() {
 		})
 
 		// POST /api/v1/boards/:slug/posts/:id/comments - Create comment in g5_write_{slug}
-		v1Boards.POST("/:slug/posts/:id/comments", middleware.JWTAuth(jwtManager), middleware.IPProtection(ipProtectCfg), func(c *gin.Context) {
+		v1Boards.POST("/:slug/posts/:id/comments", middleware.JWTAuth(jwtManager), banCheck, middleware.IPProtection(ipProtectCfg), func(c *gin.Context) {
 			slug := c.Param("slug")
 			postID, err := strconv.Atoi(c.Param("id"))
 			if err != nil {
@@ -2228,7 +2232,7 @@ func main() {
 		})
 
 		// PUT /api/v1/boards/:slug/posts/:id - Update post
-		v1Boards.PUT("/:slug/posts/:id", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+		v1Boards.PUT("/:slug/posts/:id", middleware.JWTAuth(jwtManager), banCheck, func(c *gin.Context) {
 			slug := c.Param("slug")
 			postID, err := strconv.Atoi(c.Param("id"))
 			if err != nil {
@@ -2325,7 +2329,7 @@ func main() {
 		})
 
 		// PUT /api/v1/boards/:slug/posts/:id/comments/:comment_id - Update comment
-		v1Boards.PUT("/:slug/posts/:id/comments/:comment_id", middleware.JWTAuth(jwtManager), func(c *gin.Context) {
+		v1Boards.PUT("/:slug/posts/:id/comments/:comment_id", middleware.JWTAuth(jwtManager), banCheck, func(c *gin.Context) {
 			slug := c.Param("slug")
 			commentID, err := strconv.Atoi(c.Param("comment_id"))
 			if err != nil {
