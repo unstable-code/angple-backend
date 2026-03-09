@@ -249,6 +249,7 @@ func main() {
 
 	// Gin 라우터 생성
 	router := gin.Default()
+	router.TrustedPlatform = "CF-Connecting-IP"
 
 	// CORS 설정
 	allowOrigins := cfg.CORS.AllowOrigins
