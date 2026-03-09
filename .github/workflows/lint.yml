@@ -29,7 +29,7 @@ jobs:
       uses: golangci/golangci-lint-action@v7
       with:
         version: v2.11.2
-        args: --timeout=5m --exclude-dirs=plugins
+        args: --timeout=5m
 
   golangci-reviewdog:
     name: golangci-lint with reviewdog
@@ -50,7 +50,7 @@ jobs:
       uses: golangci/golangci-lint-action@v7
       with:
         version: v2.11.2
-        args: --timeout=5m --exclude-dirs=plugins
+        args: --timeout=5m
         only-new-issues: true
 
   format:
