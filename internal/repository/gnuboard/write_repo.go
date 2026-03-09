@@ -102,22 +102,6 @@ func tableName(boardID string) string {
 	return fmt.Sprintf("g5_write_%s", boardID)
 }
 
-// buildSearchCondition builds WHERE clause for search
-func buildSearchCondition(searchField, searchQuery string) (string, []interface{}) {
-	likeQuery := "%" + searchQuery + "%"
-	switch searchField {
-	case "title":
-		return "wr_subject LIKE ?", []interface{}{likeQuery}
-	case "content":
-		return "wr_content LIKE ?", []interface{}{likeQuery}
-	case "title_content":
-		return "(wr_subject LIKE ? OR wr_content LIKE ?)", []interface{}{likeQuery, likeQuery}
-	case "author":
-		return "(wr_name LIKE ? OR mb_id LIKE ?)", []interface{}{likeQuery, likeQuery}
-	default:
-		return "(wr_subject LIKE ? OR wr_content LIKE ?)", []interface{}{likeQuery, likeQuery}
-	}
-}
 
 // getSortField returns the sort clause for a board (with caching)
 func (r *writeRepository) getSortField(boardID string) string {

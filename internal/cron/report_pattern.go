@@ -3,7 +3,6 @@ package cron
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -531,18 +530,3 @@ func getSingoTypes() map[int]string {
 	return reportTypeLabels
 }
 
-// numberFormat formats an integer with comma separators
-func numberFormat(n int) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result.WriteByte(',')
-		}
-		result.WriteRune(c)
-	}
-	return result.String()
-}

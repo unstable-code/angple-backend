@@ -109,6 +109,7 @@ linters:
           - errcheck
           - goconst
           - gocyclo
+          - gosec
           - revive
           - staticcheck
         path: internal/cron/.*\.go
@@ -122,6 +123,7 @@ linters:
           - gosec
           - noctx
           - revive
+          - rowserrcheck
         path: pkg/sphinx/.*\.go
       - linters:
           - gosec
@@ -132,6 +134,7 @@ linters:
       - linters:
           - errorlint
           - gocyclo
+          - misspell
           - revive
         path: internal/repository/gnuboard/.*\.go
       - linters:
