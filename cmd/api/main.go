@@ -4325,6 +4325,7 @@ func initDB(cfg *config.Config) (*gorm.DB, error) {
 		mysqlCfg.Params = map[string]string{}
 	}
 	mysqlCfg.Params["time_zone"] = "'+09:00'"
+	mysqlCfg.InterpolateParams = true // prepared statement 누적 방지 (RDS max_prepared_stmt_count 한계)
 
 	// 프로덕션: Warn (SQL 로깅 비활성화로 I/O 대폭 감소)
 	// 개발: Info (디버깅용 SQL 로깅)
