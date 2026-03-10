@@ -1,14 +1,17 @@
 package gnuboard
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/damoang/angple-backend/internal/domain/gnuboard"
 	"github.com/damoang/angple-backend/pkg/sphinx"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -85,6 +88,7 @@ type WriteRepository interface {
 type writeRepository struct {
 	db     *gorm.DB
 	sphinx *sphinx.Client
+	redis  *redis.Client
 }
 
 // NewWriteRepository creates a new Gnuboard WriteRepository
@@ -95,6 +99,16 @@ func NewWriteRepository(db *gorm.DB) WriteRepository {
 // NewWriteRepositoryWithSphinx creates a WriteRepository with Sphinx search support.
 func NewWriteRepositoryWithSphinx(db *gorm.DB, sphinxClient *sphinx.Client) WriteRepository {
 	return &writeRepository{db: db, sphinx: sphinxClient}
+}
+
+// NewWriteRepositoryWithRedis creates a WriteRepository with Redis for cross-pod COUNT cache sharing.
+func NewWriteRepositoryWithRedis(db *gorm.DB, redisClient *redis.Client) WriteRepository {
+	return &writeRepository{db: db, redis: redisClient}
+}
+
+// NewWriteRepositoryFull creates a WriteRepository with both Sphinx and Redis.
+func NewWriteRepositoryFull(db *gorm.DB, sphinxClient *sphinx.Client, redisClient *redis.Client) WriteRepository {
+	return &writeRepository{db: db, sphinx: sphinxClient, redis: redisClient}
 }
 
 // tableName generates the dynamic table name for a board
@@ -132,19 +146,14 @@ func (r *writeRepository) FindPosts(boardID string, page, limit int) ([]*gnuboar
 	offset := (page - 1) * limit
 	table := tableName(boardID)
 
-	// Posts count with in-memory cache (avoids expensive COUNT on large tables)
-	cacheKey := "count:" + boardID
-	if cached, ok := postCountCache.Load(cacheKey); ok {
-		if cc, ok2 := cached.(*cachedCount); ok2 && time.Now().Before(cc.expiresAt) {
-			total = cc.total
-		}
-	}
+	// Posts count with Redis cache (shared across all pods)
+	total = r.getCachedPostCount(boardID)
 	if total == 0 {
 		countQuery := r.db.Table(table).Where("wr_is_comment = 0 AND (wr_deleted_at IS NULL OR wr_deleted_at = '0000-00-00 00:00:00')")
 		if err := countQuery.Count(&total).Error; err != nil {
 			return nil, 0, err
 		}
-		postCountCache.Store(cacheKey, &cachedCount{total: total, expiresAt: time.Now().Add(countCacheTTL)})
+		r.setCachedPostCount(boardID, total)
 	}
 
 	// 게시판별 커스텀 정렬 (bo_sort_field) — 캐시 사용
@@ -214,17 +223,12 @@ func (r *writeRepository) FindPostsFiltered(boardID string, page, limit int, exc
 
 	// Reuse cached total count (same as FindPosts — avoids expensive COUNT on large tables)
 	var total int64
-	cacheKey := "count:" + boardID
-	if cached, ok := postCountCache.Load(cacheKey); ok {
-		if cc, ok2 := cached.(*cachedCount); ok2 && time.Now().Before(cc.expiresAt) {
-			total = cc.total
-		}
-	}
+	total = r.getCachedPostCount(boardID)
 	if total == 0 {
 		if err := r.db.Table(table).Where("wr_is_comment = 0 AND (wr_deleted_at IS NULL OR wr_deleted_at = '0000-00-00 00:00:00')").Count(&total).Error; err != nil {
 			return nil, 0, err
 		}
-		postCountCache.Store(cacheKey, &cachedCount{total: total, expiresAt: time.Now().Add(countCacheTTL)})
+		r.setCachedPostCount(boardID, total)
 	}
 
 	orderClause := r.getSortField(boardID)
@@ -415,14 +419,69 @@ func (r *writeRepository) FindDeletedPosts(boardID string, page, limit int) ([]*
 	return posts, total, err
 }
 
-// InvalidatePostCount clears the cached post count for a board
+// postCountRedisKey returns the Redis key for post count cache
+func postCountRedisKey(boardID string) string {
+	return "postcount:" + boardID
+}
+
+// getCachedPostCount tries Redis first, then falls back to in-memory cache
+func (r *writeRepository) getCachedPostCount(boardID string) int64 {
+	// Try Redis first (shared across all pods)
+	if r.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		val, err := r.redis.Get(ctx, postCountRedisKey(boardID)).Result()
+		if err == nil {
+			if count, err := strconv.ParseInt(val, 10, 64); err == nil {
+				return count
+			}
+		}
+	}
+
+	// Fallback to in-memory cache
+	cacheKey := "count:" + boardID
+	if cached, ok := postCountCache.Load(cacheKey); ok {
+		if cc, ok2 := cached.(*cachedCount); ok2 && time.Now().Before(cc.expiresAt) {
+			return cc.total
+		}
+	}
+	return 0
+}
+
+// setCachedPostCount stores count in both Redis (shared) and in-memory (local fallback)
+func (r *writeRepository) setCachedPostCount(boardID string, total int64) {
+	// Store in Redis (shared across pods)
+	if r.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		r.redis.Set(ctx, postCountRedisKey(boardID), total, countCacheTTL)
+	}
+
+	// Also store in local memory as fallback
+	postCountCache.Store("count:"+boardID, &cachedCount{total: total, expiresAt: time.Now().Add(countCacheTTL)})
+}
+
+// invalidatePostCount clears the cached post count for a board from both Redis and memory
+func (r *writeRepository) invalidatePostCount(boardID string) {
+	// Invalidate Redis
+	if r.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		r.redis.Del(ctx, postCountRedisKey(boardID))
+	}
+
+	// Invalidate in-memory
+	postCountCache.Delete("count:" + boardID)
+}
+
+// InvalidatePostCount clears the cached post count from in-memory cache (legacy, no Redis)
 func InvalidatePostCount(boardID string) {
 	postCountCache.Delete("count:" + boardID)
 }
 
 // CreatePost creates a new post
 func (r *writeRepository) CreatePost(boardID string, post *gnuboard.G5Write) error {
-	InvalidatePostCount(boardID)
+	r.invalidatePostCount(boardID)
 	return r.db.Table(tableName(boardID)).Create(post).Error
 }
 
@@ -433,7 +492,7 @@ func (r *writeRepository) UpdatePost(boardID string, post *gnuboard.G5Write) err
 
 // DeletePost permanently deletes a post and its comments from the database
 func (r *writeRepository) DeletePost(boardID string, wrID int) error {
-	InvalidatePostCount(boardID)
+	r.invalidatePostCount(boardID)
 	table := tableName(boardID)
 	// Delete comments first
 	if err := r.db.Table(table).Where("wr_parent = ?", wrID).Delete(&gnuboard.G5Write{}).Error; err != nil {
@@ -445,7 +504,7 @@ func (r *writeRepository) DeletePost(boardID string, wrID int) error {
 
 // SoftDeletePost marks a post and its comments as deleted, and records revision history
 func (r *writeRepository) SoftDeletePost(boardID string, wrID int, deletedBy string) error {
-	InvalidatePostCount(boardID)
+	r.invalidatePostCount(boardID)
 	table := tableName(boardID)
 	now := time.Now()
 
@@ -476,7 +535,7 @@ func (r *writeRepository) SoftDeletePost(boardID string, wrID int, deletedBy str
 
 // RestorePost restores a soft deleted post (comments are not affected)
 func (r *writeRepository) RestorePost(boardID string, wrID int) error {
-	InvalidatePostCount(boardID)
+	r.invalidatePostCount(boardID)
 	table := tableName(boardID)
 
 	return r.db.Table(table).Where("wr_id = ?", wrID).Updates(map[string]interface{}{

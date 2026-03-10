@@ -364,8 +364,12 @@ func main() {
 		// Gnuboard repositories for v1 API (g5_* tables)
 		gnuBoardRepo := gnurepo.NewBoardRepository(db)
 		var gnuWriteRepo gnurepo.WriteRepository
-		if sphinxClient != nil {
+		if sphinxClient != nil && redisClient != nil {
+			gnuWriteRepo = gnurepo.NewWriteRepositoryFull(db, sphinxClient, redisClient)
+		} else if sphinxClient != nil {
 			gnuWriteRepo = gnurepo.NewWriteRepositoryWithSphinx(db, sphinxClient)
+		} else if redisClient != nil {
+			gnuWriteRepo = gnurepo.NewWriteRepositoryWithRedis(db, redisClient)
 		} else {
 			gnuWriteRepo = gnurepo.NewWriteRepository(db)
 		}
