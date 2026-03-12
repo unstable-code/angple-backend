@@ -38,10 +38,16 @@ func BanCheck(gnuDB *gorm.DB) gin.HandlerFunc {
 			// mb_intercept_date가 비어있어도 g5_da_member_discipline에 활성 제재가 있으면 차단
 			var penaltyEndDate string
 			fallbackErr := gnuDB.Raw(
-				`SELECT DATE_FORMAT(DATE_ADD(penalty_date_from, INTERVAL penalty_period DAY), '%Y%m%d')
+				`SELECT CASE
+						WHEN penalty_period = -1 THEN '99991231'
+						ELSE DATE_FORMAT(DATE_ADD(penalty_date_from, INTERVAL penalty_period DAY), '%Y%m%d')
+					END
 				 FROM g5_da_member_discipline
-				 WHERE penalty_mb_id = ? AND penalty_period > 0
-				   AND DATE_ADD(penalty_date_from, INTERVAL penalty_period DAY) > NOW()
+				 WHERE penalty_mb_id = ?
+				   AND (
+						penalty_period = -1
+						OR (penalty_period > 0 AND DATE_ADD(penalty_date_from, INTERVAL penalty_period DAY) > NOW())
+				   )
 				 ORDER BY id DESC LIMIT 1`, mbID,
 			).Row().Scan(&penaltyEndDate)
 			if fallbackErr != nil || penaltyEndDate == "" {
@@ -78,7 +84,7 @@ func BanCheck(gnuDB *gorm.DB) gin.HandlerFunc {
 		// Block the request
 		banEndStr := banEnd.Format("2006-01-02 15:04:05")
 		if banEnd.Year() >= 9999 {
-			banEndStr = "영구 제재"
+			banEndStr = "영구 이용제한"
 		}
 		common.ErrorResponse(c, http.StatusForbidden,
 			"이용제한 기간 중에는 해당 기능을 사용할 수 없습니다. (해제일: "+banEndStr+")", nil)
