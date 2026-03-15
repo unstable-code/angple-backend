@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -58,7 +60,12 @@ func main() {
 			break
 		}
 
-		localPath := filepath.Join(*localDir, name)
+		localPath, err := safeJoin(*localDir, name)
+		if err != nil {
+			result.failed++
+			log.Printf("[path] %s failed: %v", name, err)
+			continue
+		}
 		key := strings.TrimPrefix(filepath.ToSlash(filepath.Join(*prefix, name)), "/")
 
 		exists, err := objectExists(*bucket, key)
@@ -94,7 +101,11 @@ func main() {
 }
 
 func objectExists(bucket, key string) (bool, error) {
-	cmd := exec.Command("aws", "s3api", "head-object", "--bucket", bucket, "--key", key)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	//nolint:gosec // bucket and key are validated application inputs, and CommandContext avoids shell expansion.
+	cmd := exec.CommandContext(ctx, "aws", "s3api", "head-object", "--bucket", bucket, "--key", key)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, nil
@@ -114,7 +125,12 @@ func uploadFile(localPath, bucket, key string) error {
 		return err
 	}
 
-	cmd := exec.Command(
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	//nolint:gosec // localPath is validated by safeJoin and the command is executed without a shell.
+	cmd := exec.CommandContext(
+		ctx,
 		"aws", "s3", "cp", localPath, fmt.Sprintf("s3://%s/%s", bucket, key),
 		"--cache-control", "public, max-age=31536000, immutable",
 		"--content-type", contentType,
@@ -132,7 +148,10 @@ func detectContentType(path string) (string, error) {
 		return contentType, nil
 	}
 
-	file, err := os.Open(path)
+	cleanPath := filepath.Clean(path)
+
+	//nolint:gosec // path is prevalidated by safeJoin and cleaned here before opening.
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return "", err
 	}
@@ -145,4 +164,34 @@ func detectContentType(path string) (string, error) {
 	}
 
 	return http.DetectContentType(bytes.TrimSpace(buf[:n])), nil
+}
+
+func safeJoin(baseDir, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("empty filename")
+	}
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("unexpected nested path: %s", name)
+	}
+
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", err
+	}
+
+	fullPath := filepath.Join(baseAbs, name)
+	fullAbs, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", err
+	}
+
+	rel, err := filepath.Rel(baseAbs, fullAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes base directory: %s", name)
+	}
+
+	return fullAbs, nil
 }
