@@ -104,7 +104,7 @@ func objectExists(bucket, key string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	//nolint:gosec // bucket and key are validated application inputs, and CommandContext avoids shell expansion.
+	// #nosec G204 -- bucket and key are validated application inputs, and CommandContext avoids shell expansion.
 	cmd := exec.CommandContext(ctx, "aws", "s3api", "head-object", "--bucket", bucket, "--key", key)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
@@ -128,7 +128,7 @@ func uploadFile(localPath, bucket, key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	//nolint:gosec // localPath is validated by safeJoin and the command is executed without a shell.
+	// #nosec G204 -- localPath is validated by safeJoin and the command is executed without a shell.
 	cmd := exec.CommandContext(
 		ctx,
 		"aws", "s3", "cp", localPath, fmt.Sprintf("s3://%s/%s", bucket, key),
@@ -150,7 +150,7 @@ func detectContentType(path string) (string, error) {
 
 	cleanPath := filepath.Clean(path)
 
-	//nolint:gosec // path is prevalidated by safeJoin and cleaned here before opening.
+	// #nosec G304 -- path is prevalidated by safeJoin and cleaned here before opening.
 	file, err := os.Open(cleanPath)
 	if err != nil {
 		return "", err
